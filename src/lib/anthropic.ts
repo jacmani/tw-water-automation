@@ -50,10 +50,15 @@ Fields: V Side Well B1+B2, N Side Well+B3, JTR Tanker, MTR Tanker, IN PUT total,
 0.7 = could be misread
 <0.7 = very uncertain
 
+The date field is critical. Look for it at the top of the sheet — it may be handwritten, stamped, or printed.
+Set date_confidence to how certain you are the date is correct (1.0 = absolutely certain, 0.0 = cannot read).
+If the date is absent, ambiguous, or illegible, set date to null and date_confidence to 0.0.
+
 Return ONLY a valid JSON object — no markdown, no explanation. Use null for blank/unreadable cells.
 
 {
   "date": "YYYY-MM-DD or null",
+  "date_confidence": 0.0,
   "overall_confidence": 0.0,
   "tower_section": {
     "Venus": {

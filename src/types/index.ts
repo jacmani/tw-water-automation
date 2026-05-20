@@ -124,6 +124,7 @@ export interface SummaryData {
 
 export interface ExtractionResult {
   date: string | null;
+  date_confidence: number;
   overall_confidence: number;
   tower_section: Record<TowerName, { DO: TowerMeterData; DR: TowerMeterData }>;
   water_sources: WaterSourceData[];
