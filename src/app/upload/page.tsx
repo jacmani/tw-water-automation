@@ -3,6 +3,7 @@
 import { useState, useRef, ChangeEvent, FormEvent } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import imageCompression from 'browser-image-compression';
 
 function getTodayLocal(): string {
   const d = new Date();
@@ -22,6 +23,7 @@ export default function UploadPage() {
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [compressing, setCompressing] = useState(false);
   const [result, setResult] = useState<UploadResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -38,11 +40,26 @@ export default function UploadPage() {
     e.preventDefault();
     if (!file) return;
 
-    setLoading(true);
     setResult(null);
+    setCompressing(true);
+
+    let imageToUpload: File;
+    try {
+      imageToUpload = await imageCompression(file, {
+        maxSizeMB: 2,
+        maxWidthOrHeight: 1920,
+        useWebWorker: true,
+      });
+    } catch {
+      imageToUpload = file;
+    } finally {
+      setCompressing(false);
+    }
+
+    setLoading(true);
 
     const formData = new FormData();
-    formData.append('image', file);
+    formData.append('image', imageToUpload);
     formData.append('date', date);
 
     try {
@@ -207,10 +224,15 @@ export default function UploadPage() {
             {/* Submit */}
             <button
               type="submit"
-              disabled={loading || !file}
+              disabled={loading || compressing || !file}
               className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:cursor-not-allowed text-white font-semibold py-4 rounded-xl text-base transition-colors flex items-center justify-center gap-2"
             >
-              {loading ? (
+              {compressing ? (
+                <>
+                  <span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  Compressing…
+                </>
+              ) : loading ? (
                 <>
                   <span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                   Processing…
