@@ -115,7 +115,7 @@ export default async function Dashboard() {
 
         <section>
           <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-3">
-            Tower Consumption — Today
+            Tower Consumption — Yesterday
           </p>
           <div className="grid grid-cols-2 gap-3">
             {dashboardData.towers.map((t) => (
