@@ -65,6 +65,11 @@ export function formatShortDate(dateStr: string): string {
   return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
 }
 
+export function formatMediumDate(dateStr: string): string {
+  const date = new Date(dateStr + 'T00:00:00');
+  return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
 export function getTodayString(): string {
   return new Date().toISOString().split('T')[0];
 }

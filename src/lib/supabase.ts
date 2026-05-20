@@ -31,6 +31,17 @@ export async function getTodaySheet(date: string): Promise<DailySheet | null> {
   return data;
 }
 
+export async function getMostRecentSheet(): Promise<DailySheet | null> {
+  const { data } = await supabase
+    .from('daily_sheets')
+    .select('*')
+    .eq('processed_status', 'processed')
+    .order('date', { ascending: false })
+    .limit(1)
+    .single();
+  return data;
+}
+
 export async function getTowerConsumptionForSheet(
   sheetId: string
 ): Promise<TowerConsumption[]> {

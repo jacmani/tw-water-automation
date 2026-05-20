@@ -1,6 +1,6 @@
 import Link from 'next/link';
-import { getTodaySheet, getTowerConsumptionForSheet, getSummaryForSheet, getTowerTrend } from '@/lib/supabase';
-import { TOWERS, formatDate } from '@/lib/utils';
+import { getMostRecentSheet, getTowerConsumptionForSheet, getSummaryForSheet, getTowerTrend } from '@/lib/supabase';
+import { TOWERS, formatDate, formatMediumDate } from '@/lib/utils';
 import TowerCard from '@/components/dashboard/TowerCard';
 import TrendChart from '@/components/dashboard/TrendChart';
 import SummaryRow from '@/components/dashboard/SummaryRow';
@@ -13,18 +13,21 @@ export const revalidate = 60;
 export default async function Dashboard() {
   const today = new Date().toISOString().split('T')[0];
 
-  const [todaySheet, trendData] = await Promise.all([
-    getTodaySheet(today),
+  const [recentSheet, trendData] = await Promise.all([
+    getMostRecentSheet(),
     getTowerTrend(7),
   ]);
+
+  const hasTodaySheet = recentSheet?.date === today;
+  const sheetDate = recentSheet?.date ?? today;
 
   let towerConsumption: Awaited<ReturnType<typeof getTowerConsumptionForSheet>> = [];
   let summary: Awaited<ReturnType<typeof getSummaryForSheet>> = null;
 
-  if (todaySheet) {
+  if (recentSheet) {
     [towerConsumption, summary] = await Promise.all([
-      getTowerConsumptionForSheet(todaySheet.id),
-      getSummaryForSheet(todaySheet.id),
+      getTowerConsumptionForSheet(recentSheet.id),
+      getSummaryForSheet(recentSheet.id),
     ]);
   }
 
@@ -32,14 +35,14 @@ export default async function Dashboard() {
     const doRow = towerConsumption.find((r) => r.tower === tower && r.type === 'DO');
     const drRow = towerConsumption.find((r) => r.tower === tower && r.type === 'DR');
     const totalToday =
-      todaySheet ? ((doRow?.total_ltrs ?? 0) + (drRow?.total_ltrs ?? 0)) || null : null;
+      recentSheet ? ((doRow?.total_ltrs ?? 0) + (drRow?.total_ltrs ?? 0)) || null : null;
 
     const towerTrend = trendData
       .filter((d) => d.tower === tower)
       .map((d) => ({ date: d.date, total: d.total_ltrs }));
 
     const historicalTotals = towerTrend
-      .filter((d) => d.date !== today)
+      .filter((d) => d.date !== sheetDate)
       .map((d) => d.total);
     const sevenDayAvg =
       historicalTotals.length > 0
@@ -47,31 +50,31 @@ export default async function Dashboard() {
         : null;
 
     const sortedTrend = [...towerTrend].sort((a, b) => b.date.localeCompare(a.date));
-    const yesterdayEntry = sortedTrend.find((d) => d.date !== today);
+    const prevEntry = sortedTrend.find((d) => d.date !== sheetDate);
 
     return {
       tower,
       today_do: doRow?.total_ltrs ?? null,
       today_dr: drRow?.total_ltrs ?? null,
       total_today: totalToday,
-      total_yesterday: yesterdayEntry?.total ?? null,
+      total_yesterday: prevEntry?.total ?? null,
       seven_day_avg: sevenDayAvg,
       trend: towerTrend,
     };
   });
 
   const totalConsumption =
-    todaySheet
+    recentSheet
       ? towers.reduce((sum, t) => sum + (t.total_today ?? 0), 0) || null
       : null;
 
   const dashboardData: DashboardData = {
-    date: today,
+    date: sheetDate,
     towers,
     total_consumption: totalConsumption,
     input_total: summary?.input_total ?? null,
     diff: summary?.diff ?? null,
-    has_sheet: !!todaySheet,
+    has_sheet: !!recentSheet,
     flagged_fields: [],
   };
 
@@ -103,7 +106,7 @@ export default async function Dashboard() {
       </header>
 
       <div className="max-w-4xl mx-auto px-4 py-5 space-y-6">
-        <MissingSheetAlert hasSheet={dashboardData.has_sheet} />
+        <MissingSheetAlert hasSheet={hasTodaySheet} />
 
         {dashboardData.has_sheet && (
           <SummaryRow
@@ -115,7 +118,7 @@ export default async function Dashboard() {
 
         <section>
           <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-3">
-            Tower Consumption — Yesterday
+            Tower Consumption — {formatMediumDate(sheetDate)}
           </p>
           <div className="grid grid-cols-2 gap-3">
             {dashboardData.towers.map((t) => (
