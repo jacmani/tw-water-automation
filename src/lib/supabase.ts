@@ -42,6 +42,14 @@ export async function getMostRecentSheet(): Promise<DailySheet | null> {
   return data;
 }
 
+export async function wasSheetUploadedToday(todayUtc: string): Promise<boolean> {
+  const { count } = await supabase
+    .from('daily_sheets')
+    .select('id', { count: 'exact', head: true })
+    .gte('created_at', `${todayUtc}T00:00:00`);
+  return (count ?? 0) > 0;
+}
+
 export async function getTowerConsumptionForSheet(
   sheetId: string
 ): Promise<TowerConsumption[]> {

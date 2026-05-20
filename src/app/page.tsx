@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { getMostRecentSheet, getTowerConsumptionForSheet, getSummaryForSheet, getTowerTrend } from '@/lib/supabase';
+import { getMostRecentSheet, wasSheetUploadedToday, getTowerConsumptionForSheet, getSummaryForSheet, getTowerTrend } from '@/lib/supabase';
 import { TOWERS, formatDate, formatMediumDate } from '@/lib/utils';
 import TowerCard from '@/components/dashboard/TowerCard';
 import TrendChart from '@/components/dashboard/TrendChart';
@@ -13,12 +13,11 @@ export const revalidate = 60;
 export default async function Dashboard() {
   const today = new Date().toISOString().split('T')[0];
 
-  const [recentSheet, trendData] = await Promise.all([
+  const [recentSheet, trendData, hasTodaySheet] = await Promise.all([
     getMostRecentSheet(),
     getTowerTrend(7),
+    wasSheetUploadedToday(today),
   ]);
-
-  const hasTodaySheet = recentSheet?.date === today;
   const sheetDate = recentSheet?.date ?? today;
 
   let towerConsumption: Awaited<ReturnType<typeof getTowerConsumptionForSheet>> = [];
