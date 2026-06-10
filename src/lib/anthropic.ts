@@ -25,6 +25,15 @@ Rows (read in this order):
   M+V DO with MTR, J+N DO with JTR, V Well 1+2+3, V Well 4+B1+B2, N Well 5, N Well 6, ON Outside Well, Kingsley
 Columns: R Y Day, R Today, Yesterday in Ltrs, Today in Ltrs, Total
 
+CRITICAL — ADJACENT ROW DUPLICATION: Each source row MUST be read independently.
+Do NOT copy or assume a value from one row to the next. If two adjacent rows appear
+to have identical values, re-examine the original handwriting — this almost certainly
+means you misread one of them. This applies especially to:
+  • "M+V DO with MTR" vs "J+N DO with JTR" (these are different water sources)
+  • "V Well 1+2+3" vs "V Well 4+B1+B2" (these are different well groups)
+If the values genuinely match after careful re-reading, set confidence < 0.8 and
+add both field names to flagged_fields.
+
 === SECTION 3: WATER LEVEL SECTION ===
 Physical tank levels taken 4 times daily.
 Tanks: JDO, JDR, CT, MDO, MDR, Fire Tank
@@ -40,8 +49,37 @@ Columns: Y Day, R Day, Diff
 Meters: Meter 6, Meter 7, WTP1, WTP2, VUF, JUF, Venus STP
 Columns: Y Day, T Day, Diff
 
-=== SECTION 6: WATER CONSUMPTION SUMMARY (bottom) ===
-Fields: V Side Well B1+B2, N Side Well+B3, JTR Tanker, MTR Tanker, IN PUT total, Tower Usage (OUT PUT), Diff
+=== SECTION 6: WATER CONSUMPTION SUMMARY (bottom of sheet) ===
+This section has 7 labeled rows. You MUST anchor each value to its row label text —
+never read positionally. The row labels and their JSON fields are:
+  "V Side Well B1+B2"       → v_side
+  "N Side Well+B3"          → n_side
+  "JTR Tanker"              → jtr_tanker
+  "MTR Tanker"              → mtr_tanker
+  "IN PUT total"            → input_total   (sum of all input sources)
+  "Tower Usage (OUT PUT)"   → tower_usage
+  "Diff"                    → diff
+
+CRITICAL: The "IN PUT total" is a TOTAL row. Its value is always larger than any
+individual source row above it. Never place the input_total value into v_side,
+n_side, jtr_tanker, or mtr_tanker. Read the label text on each row explicitly.
+
+=== SANITY RANGES ===
+After extracting each value, verify it falls within the expected range for that field.
+If a value is outside the range, set confidence for that field to 0.6 and add
+"fieldname: out_of_range (value)" to flagged_fields. Never set the value to null
+or 0 just because it is out of range — report what you actually read.
+
+Expected ranges:
+  Tower section total_ltrs (DO rows): 50,000 – 250,000 L
+  Tower section total_ltrs (DR rows): 5,000 – 40,000 L
+  Water source Total column: 20,000 – 400,000 L
+  summary.v_side: 30,000 – 200,000 L
+  summary.n_side: 30,000 – 350,000 L
+  summary.jtr_tanker: 0 – 500,000 L
+  summary.mtr_tanker: 0 – 500,000 L
+  summary.input_total: 150,000 – 900,000 L
+  summary.tower_usage: 300,000 – 800,000 L
 
 === CONFIDENCE SCORING ===
 1.0 = completely clear
@@ -169,7 +207,6 @@ export async function extractSheetData(
 
   const parsed: ExtractionResult = JSON.parse(jsonStr);
 
-  // Ensure flagged_fields exists
   if (!parsed.flagged_fields) parsed.flagged_fields = [];
 
   return parsed;

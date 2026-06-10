@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import type { DailySheet, TowerConsumption, WaterSource, WaterLevel, Amenity, Summary } from '@/types';
+import type { DailySheet, TowerConsumption, WaterSource, WaterLevel, Amenity, Summary, CommitteeMember } from '@/types';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -25,6 +25,7 @@ export async function getTodaySheet(date: string): Promise<DailySheet | null> {
     .select('*')
     .eq('date', date)
     .eq('processed_status', 'processed')
+    .eq('superseded', false)
     .order('created_at', { ascending: false })
     .limit(1)
     .single();
@@ -36,6 +37,7 @@ export async function getMostRecentSheet(): Promise<DailySheet | null> {
     .from('daily_sheets')
     .select('*')
     .eq('processed_status', 'processed')
+    .eq('superseded', false)
     .order('date', { ascending: false })
     .limit(1)
     .single();
@@ -69,7 +71,7 @@ export async function getSummaryForSheet(sheetId: string): Promise<Summary | nul
   return data;
 }
 
-// Returns last N days of tower consumption totals per tower per day.
+// Returns last N days of tower consumption totals per tower per day (non-superseded only).
 export async function getTowerTrend(days: number = 7): Promise<
   { date: string; tower: string; total_ltrs: number }[]
 > {
@@ -84,6 +86,7 @@ export async function getTowerTrend(days: number = 7): Promise<
     )
     .gte('date', cutoffStr)
     .eq('processed_status', 'processed')
+    .eq('superseded', false)
     .order('date', { ascending: true });
 
   if (!data) return [];
@@ -120,6 +123,7 @@ export async function getRecentTowerTotals(
     .select(`date, tower_consumption(tower, total_ltrs)`)
     .lt('date', beforeDate)
     .eq('processed_status', 'processed')
+    .eq('superseded', false)
     .order('date', { ascending: false })
     .limit(limit);
 
@@ -135,3 +139,43 @@ export async function getRecentTowerTotals(
     })
     .filter((d) => d.total > 0);
 }
+
+// ─────────────────────────────────────────
+// Committee queries
+// ─────────────────────────────────────────
+
+export async function getCommitteeTerms(): Promise<string[]> {
+  const { data } = await supabase
+    .from('committee_members')
+    .select('term')
+    .order('term', { ascending: false });
+  if (!data) return [];
+  return [...new Set(data.map((d) => d.term as string))];
+}
+
+export async function getCurrentCommitteeTerm(): Promise<string | null> {
+  const terms = await getCommitteeTerms();
+  return terms[0] ?? null;
+}
+
+export async function getCommitteeMembers(term: string): Promise<CommitteeMember[]> {
+  const { data } = await supabase
+    .from('committee_members')
+    .select('*')
+    .eq('term', term)
+    .eq('active', true)
+    .order('name');
+  return (data ?? []) as CommitteeMember[];
+}
+
+export async function getAllCommitteeMembers(term: string): Promise<CommitteeMember[]> {
+  const { data } = await supabase
+    .from('committee_members')
+    .select('*')
+    .eq('term', term)
+    .order('name');
+  return (data ?? []) as CommitteeMember[];
+}
+
+// Unused imports kept for type exports
+export type { WaterSource, WaterLevel, Amenity };

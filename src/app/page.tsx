@@ -95,12 +95,20 @@ export default async function Dashboard() {
             <h1 className="text-lg font-bold text-white leading-tight">Trinity World Water</h1>
             <p className="text-slate-400 text-xs mt-0.5">{formatDate(today)}</p>
           </div>
-          <Link
-            href="/upload"
-            className="bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
-          >
-            Upload Sheet
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/committee"
+              className="text-slate-400 hover:text-white text-sm font-medium px-3 py-2 rounded-lg transition-colors"
+            >
+              Committee
+            </Link>
+            <Link
+              href="/upload"
+              className="bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+            >
+              Upload Sheet
+            </Link>
+          </div>
         </div>
       </header>
 
@@ -112,6 +120,7 @@ export default async function Dashboard() {
             inputTotal={dashboardData.input_total}
             towerUsage={dashboardData.total_consumption}
             diff={dashboardData.diff}
+            sheetDate={dashboardData.date}
           />
         )}
 

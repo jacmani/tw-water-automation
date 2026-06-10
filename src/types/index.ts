@@ -3,6 +3,41 @@ export type MeterType = 'DO' | 'DR';
 export type TankName = 'JDO' | 'JDR' | 'CT' | 'MDO' | 'MDR' | 'Fire Tank';
 export type TimeSlot = '6AM' | '12PM' | '6PM' | '12AM';
 
+export type CommitteeRole =
+  | 'President'
+  | 'Vice President'
+  | 'Secretary'
+  | 'Joint Secretary'
+  | 'Treasurer'
+  | 'Joint Treasurer'
+  | 'Technical Expert'
+  | 'Financial Expert'
+  | 'GC Chair'
+  | 'GC Member';
+
+export const OFFICE_BEARER_ROLES: CommitteeRole[] = [
+  'President', 'Vice President', 'Secretary', 'Joint Secretary',
+  'Treasurer', 'Joint Treasurer', 'Technical Expert', 'Financial Expert',
+];
+export const ALL_COMMITTEE_ROLES: CommitteeRole[] = [
+  ...OFFICE_BEARER_ROLES, 'GC Chair', 'GC Member',
+];
+
+export interface CommitteeMember {
+  id: string;
+  term: string;
+  name: string;
+  role: CommitteeRole;
+  tower: TowerName | null;
+  apartment: string | null;
+  phone: string | null;
+  email: string | null;
+  whatsapp_optin: boolean;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface DailySheet {
   id: string;
   date: string;
@@ -10,6 +45,7 @@ export interface DailySheet {
   image_url: string | null;
   processed_status: 'pending' | 'processed' | 'failed';
   confidence_score: number | null;
+  superseded: boolean;
   created_at: string;
 }
 

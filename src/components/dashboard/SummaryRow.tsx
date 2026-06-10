@@ -1,18 +1,21 @@
 import { formatLitresFull } from '@/lib/utils';
 
+import { formatMediumDate } from '@/lib/utils';
+
 interface Props {
   inputTotal: number | null;
   towerUsage: number | null;
   diff: number | null;
+  sheetDate: string;
 }
 
-export default function SummaryRow({ inputTotal, towerUsage, diff }: Props) {
+export default function SummaryRow({ inputTotal, towerUsage, diff, sheetDate }: Props) {
   const diffIsLarge = diff != null && Math.abs(diff) > 2000;
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
       <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-3">
-        Input vs Output — Today
+        Input vs Output — {formatMediumDate(sheetDate)}
       </p>
       <div className="grid grid-cols-3 gap-3 text-center">
         <div>
