@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
+import { sendSpikeAlert } from '@/lib/email';
 import type { ExtractionResult, TowerName } from '@/types';
+import { percentageDiff } from '@/lib/utils';
+
+const SPIKE_THRESHOLD = 15; // % above 7-day avg
 
 export async function POST(request: NextRequest) {
   const supabase = createServerClient();
@@ -89,11 +93,78 @@ export async function POST(request: NextRequest) {
 
     await supabase
       .from('daily_sheets')
-      .update({
-        processed_status: 'processed',
-        confidence_score: extraction.overall_confidence,
-      })
+      .update({ processed_status: 'processed', confidence_score: extraction.overall_confidence })
       .eq('id', sheet.id);
+
+    // ── Spike alert check ─────────────────────────────────────────────────────
+    // Build per-tower totals from extraction
+    const towerTotals: Record<TowerName, number> = {
+      Venus: 0, Mercury: 0, Neptune: 0, Jupiter: 0,
+    };
+    for (const row of towerRows) {
+      if (row.total_ltrs != null) {
+        towerTotals[row.tower as TowerName] += row.total_ltrs;
+      }
+    }
+
+    // Fetch 7-day averages (last 7 non-superseded sheets before today, excluding today's)
+    const { data: recentSheets } = await supabase
+      .from('daily_sheets')
+      .select('id')
+      .lt('date', date)
+      .eq('processed_status', 'processed')
+      .eq('superseded', false)
+      .order('date', { ascending: false })
+      .limit(7);
+
+    const recentSheetIds = (recentSheets ?? []).map((s) => s.id);
+
+    const sevenDayAvgs: Record<TowerName, number | null> = {
+      Venus: null, Mercury: null, Neptune: null, Jupiter: null,
+    };
+
+    if (recentSheetIds.length > 0) {
+      const { data: historicRows } = await supabase
+        .from('tower_consumption')
+        .select('tower, type, total_ltrs, sheet_id')
+        .in('sheet_id', recentSheetIds);
+
+      if (historicRows) {
+        // Sum DO+DR per tower per sheet, then average across sheets
+        const perSheetTower: Record<string, Record<TowerName, number>> = {};
+        for (const row of historicRows) {
+          if (row.total_ltrs == null) continue;
+          if (!perSheetTower[row.sheet_id]) perSheetTower[row.sheet_id] = { Venus: 0, Mercury: 0, Neptune: 0, Jupiter: 0 };
+          perSheetTower[row.sheet_id][row.tower as TowerName] += row.total_ltrs;
+        }
+        for (const tower of towers) {
+          const vals = Object.values(perSheetTower).map((r) => r[tower]).filter((v) => v > 0);
+          if (vals.length > 0) sevenDayAvgs[tower] = vals.reduce((a, b) => a + b, 0) / vals.length;
+        }
+      }
+    }
+
+    // Fire spike alerts (non-blocking — don't fail the request if email fails)
+    const spikes: Promise<void>[] = [];
+    for (const tower of towers) {
+      const current = towerTotals[tower];
+      const avg = sevenDayAvgs[tower];
+      if (current > 0 && avg != null && avg > 0) {
+        const pct = percentageDiff(current, avg);
+        if (pct >= SPIKE_THRESHOLD) {
+          spikes.push(
+            sendSpikeAlert(supabase, {
+              tower,
+              sheetDate: date,
+              currentLitres: current,
+              sevenDayAvg: avg,
+              overagePct: pct,
+            }).catch((err) => console.error(`Spike alert failed for ${tower}:`, err))
+          );
+        }
+      }
+    }
+    await Promise.all(spikes);
 
     return NextResponse.json({
       success: true,

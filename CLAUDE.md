@@ -238,19 +238,21 @@ NEXT_PUBLIC_TECHNICIAN_PHONE=    # Phone number shown on Template A infographic
 
 ---
 
-## What Is Built (v1)
+## What Is Built
 
 - [x] Next.js 14 App Router project
 - [x] Supabase schema migration (all 6 tables + `committee_members` + `superseded` column)
 - [x] Upload page `/upload` — mobile-first, camera capture, no login
 - [x] API route `/api/upload` — image → Supabase storage → Claude Vision → all tables
 - [x] Dashboard `/` — tower cards, summary, 7-day trend, missing sheet alert
-- [x] Infographic Template A (Daily Tower Card)
-- [x] Infographic Template B (Pie Chart)
-- [x] Infographic Template C (Alert Poster)
+- [x] Infographic Template A (Daily Tower Card) — animated GIF + static PNG
+- [x] Infographic Template B (Pie Chart) — animated GIF + static PNG
+- [x] Infographic Template C (Alert Poster) — animated GIF + static PNG
 - [x] Committee registry `/committee` — public view, grouped by role and tower
 - [x] Committee admin `/committee/admin` — add/edit/deactivate, start new term with member cloning
 - [x] GitHub + Vercel deployment
+- [x] Alert email system (Resend) — spike alerts + weekly + monthly cron reports
+- [x] `/alerts` admin page — email send history / sandbox verification
 
 ---
 
@@ -357,4 +359,95 @@ npx ts-node --project tsconfig.json scripts/re-extract.ts --commit
 - Supabase migrations run manually in Supabase SQL editor:
   - `supabase/migrations/001_initial_schema.sql` — initial 6 tables
   - `supabase/migrations/002_committee_and_dedup.sql` — adds `superseded` column, dedup CTE, creates `committee_members` table, seeds 24 members for term `2026-27`
+  - `supabase/migrations/003_alert_log.sql` — `alert_log` table for email send history
 - **IMPORTANT:** Migration 002 must be applied BEFORE deploying code that references `superseded` or `committee_members`
+- **IMPORTANT:** Migration 003 must be applied BEFORE the email alert system will work
+
+---
+
+## Infographic GIF Pipeline
+
+All three infographic templates support both static PNG export and animated GIF export.
+
+**GIF export flow (client-side):**
+1. User clicks "↓ GIF" in InfographicPanel
+2. `animProgress` state for that template resets to 0
+3. A loop captures 22 frames (+ 5 hold frames at the end) via `html-to-image` toPng at 2× pixel ratio
+4. Each frame is loaded as an `HTMLImageElement`
+5. All frames are encoded into a looping GIF via `gif.js` (Web Worker based)
+6. GIF blob is downloaded to the user's device
+
+**gif.js setup:**
+- Package: `gif.js` (npm)
+- Worker file copied to `public/gif.worker.js` at install time
+- Dynamically imported at click time — never loaded server-side
+
+**Template animation props:**
+Each template accepts `animProgress?: number` (0–1, default 1 = static).
+- **TemplateA:** Ken Burns zoom-out on background + number count-up + badge fade-in
+- **TemplateB:** Pie draws in from top (recharts `startAngle=90, endAngle=90-360*p`) + total count-up + Ken Burns zoom-in
+- **TemplateC:** Background zoom-in + number count-up + alert icon pulse + tower color flash
+
+**Background photos:** 8 Trinity World photos in `public/branding/tw-1.jpg` through `tw-8.jpg`. Templates use tw-3 (A), tw-2 (B), tw-4 (C). All have 78–84% dark overlay for readability.
+
+**PNG export still works:** `toPng` called directly on the ref at `animProgress=1`.
+
+---
+
+## Alert Email System (Resend)
+
+### Architecture
+
+| Component | Path |
+|-----------|------|
+| Email sender + HTML templates | `src/lib/email.ts` |
+| Spike alert trigger | `src/app/api/upload/confirm/route.ts` |
+| Weekly report cron | `src/app/api/cron/weekly-report/route.ts` |
+| Monthly report cron | `src/app/api/cron/monthly-report/route.ts` |
+| Alert history UI | `src/app/alerts/page.tsx` |
+| DB migration | `supabase/migrations/003_alert_log.sql` |
+| Cron schedule | `vercel.json` |
+
+### Sandbox → Production Switch
+
+**One-line change:** set `RESEND_SANDBOX=false` in Vercel environment variables.
+
+| Variable | Sandbox (default) | Production |
+|----------|-------------------|------------|
+| `RESEND_SANDBOX` | `true` (or unset) | `false` |
+| From address | `onboarding@resend.dev` | `alerts@RESEND_DOMAIN` |
+| To address | `jacmani@gmail.com` | Active committee members from DB |
+
+**Production prerequisites:**
+1. Verify a domain in Resend dashboard
+2. Set `RESEND_DOMAIN=yourdomain.com` in Vercel
+3. Add email addresses to `committee_members.email` column
+4. Set `RESEND_SANDBOX=false`
+
+### Alert Types
+
+| Type | Trigger | Recipients (prod) |
+|------|---------|-------------------|
+| `spike` | Every sheet upload — fires per tower if >15% above 7-day avg | President, Secretary, VP, GC Chairs |
+| `weekly` | Vercel Cron: Monday 08:00 IST (`30 2 * * 1`) | All active committee members |
+| `monthly` | Vercel Cron: 1st of month 08:00 IST (`30 2 1 * *`) | All active committee members |
+
+### Vercel Cron — Hobby Plan Compatibility
+
+Vercel Hobby plan allows cron jobs with a **maximum frequency of once per day**. Both schedules (weekly on Monday, monthly on 1st) run less frequently than daily — they are compatible. The cron auth header `Authorization: Bearer <CRON_SECRET>` must be set in Vercel env vars.
+
+### alert_log Schema
+
+```
+id          uuid pk
+alert_type  text          -- 'spike' | 'weekly' | 'monthly'
+sheet_date  date          -- null for aggregate reports
+tower       text          -- null for community-wide reports
+recipients  text[]
+subject     text
+sent_at     timestamptz
+status      text          -- 'sent' | 'error'
+details     jsonb         -- resend_id, error string, sandbox flag
+```
+
+Every send (success or error) is logged regardless of sandbox/production mode. Verify sends at `/alerts`.

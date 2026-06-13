@@ -97,6 +97,12 @@ export default async function Dashboard() {
           </div>
           <div className="flex items-center gap-2">
             <Link
+              href="/alerts"
+              className="text-slate-400 hover:text-white text-sm font-medium px-3 py-2 rounded-lg transition-colors"
+            >
+              Alerts
+            </Link>
+            <Link
               href="/committee"
               className="text-slate-400 hover:text-white text-sm font-medium px-3 py-2 rounded-lg transition-colors"
             >
