@@ -137,13 +137,13 @@ export default function InfographicPanel({ data }: Props) {
   function ExportButtons({
     pngFile,
     gifFile,
-    ref,
+    elRef,
     template,
     setAnimP,
   }: {
     pngFile: string;
     gifFile: string;
-    ref: React.RefObject<HTMLDivElement>;
+    elRef: React.RefObject<HTMLDivElement>;
     template: 'A' | 'B' | 'C';
     setAnimP: (p: number) => void;
   }) {
@@ -154,7 +154,7 @@ export default function InfographicPanel({ data }: Props) {
     return (
       <div style={{ display: 'flex', gap: 6 }}>
         <button
-          onClick={() => doExportPng(ref, pngFile)}
+          onClick={() => doExportPng(elRef, pngFile)}
           disabled={busy}
           className="bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5"
         >
@@ -166,7 +166,7 @@ export default function InfographicPanel({ data }: Props) {
           PNG
         </button>
         <button
-          onClick={() => doExportGif(template, gifFile, ref, setAnimP)}
+          onClick={() => doExportGif(template, gifFile, elRef, setAnimP)}
           disabled={busy}
           className="bg-indigo-900 hover:bg-indigo-800 disabled:opacity-40 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5"
         >
@@ -222,7 +222,7 @@ export default function InfographicPanel({ data }: Props) {
           <ExportButtons
             pngFile={`tw-${selectedTower.toLowerCase()}-${data.date}.png`}
             gifFile={`tw-${selectedTower.toLowerCase()}-${data.date}.gif`}
-            ref={refA}
+            elRef={refA}
             template="A"
             setAnimP={setAnimProgressA}
           />
@@ -238,7 +238,7 @@ export default function InfographicPanel({ data }: Props) {
         <ExportButtons
           pngFile={`tw-pie-${data.date}.png`}
           gifFile={`tw-pie-${data.date}.gif`}
-          ref={refB}
+          elRef={refB}
           template="B"
           setAnimP={setAnimProgressB}
         />
@@ -254,7 +254,7 @@ export default function InfographicPanel({ data }: Props) {
           <ExportButtons
             pngFile={`tw-alert-${alertTower.tower.toLowerCase()}-${data.date}.png`}
             gifFile={`tw-alert-${alertTower.tower.toLowerCase()}-${data.date}.gif`}
-            ref={refC}
+            elRef={refC}
             template="C"
             setAnimP={setAnimProgressC}
           />
