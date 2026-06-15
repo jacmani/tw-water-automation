@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { createServerClient } from '@/lib/supabase';
-import { formatMediumDate } from '@/lib/utils';
+import { formatMediumDate, formatIST } from '@/lib/utils';
 
 export const revalidate = 30;
 
@@ -130,12 +130,7 @@ export default async function AlertsPage() {
                       className={`border-b border-slate-800/50 hover:bg-slate-800/30 transition-colors ${i === logs.length - 1 ? 'border-b-0' : ''}`}
                     >
                       <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">
-                        {new Date(row.sent_at).toLocaleString('en-IN', {
-                          day: 'numeric',
-                          month: 'short',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
+                        {formatIST(row.sent_at, true)}
                       </td>
                       <td className="px-4 py-3">
                         <TypeBadge type={row.alert_type} />

@@ -50,6 +50,25 @@ export function formatLitresFull(value: number | null | undefined): string {
   return `${value.toLocaleString('en-IN')} L`;
 }
 
+// Formats a UTC timestamp as Asia/Kolkata (IST) time, always 24-hour.
+// includeDate=true → "16 Jun, 14:32 IST"   includeDate=false → "14:32 IST"
+export function formatIST(date: Date | string, includeDate = false): string {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  const timePart = d.toLocaleTimeString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  });
+  if (!includeDate) return `${timePart} IST`;
+  const datePart = d.toLocaleDateString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: 'numeric',
+    month: 'short',
+  });
+  return `${datePart}, ${timePart} IST`;
+}
+
 export function formatDate(dateStr: string): string {
   const date = new Date(dateStr + 'T00:00:00');
   return date.toLocaleDateString('en-IN', {

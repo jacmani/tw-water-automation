@@ -6,6 +6,7 @@ import TrendChart from '@/components/dashboard/TrendChart';
 import SummaryRow from '@/components/dashboard/SummaryRow';
 import MissingSheetAlert from '@/components/dashboard/MissingSheetAlert';
 import InfographicPanel from '@/components/dashboard/InfographicPanel';
+import ISTClock from '@/components/dashboard/ISTClock';
 import type { DashboardData, TrendChartPoint } from '@/types';
 
 export const revalidate = 60;
@@ -90,11 +91,12 @@ export default async function Dashboard() {
   return (
     <main className="min-h-screen bg-slate-950 text-white">
       <header className="bg-slate-900 border-b border-slate-800 px-4 py-4 sticky top-0 z-10">
-        <div className="max-w-4xl mx-auto flex items-center justify-between">
+        <div className="max-w-4xl mx-auto flex items-center justify-between gap-4">
           <div>
             <h1 className="text-lg font-bold text-white leading-tight">Trinity World Water</h1>
             <p className="text-slate-400 text-xs mt-0.5">{formatDate(today)}</p>
           </div>
+          <ISTClock />
           <div className="flex items-center gap-2">
             <Link
               href="/alerts"
