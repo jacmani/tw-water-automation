@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { getMostRecentSheet, wasSheetUploadedToday, getTowerConsumptionForSheet, getSummaryForSheet, getTowerTrend } from '@/lib/supabase';
-import { TOWERS, formatDate, formatMediumDate } from '@/lib/utils';
+import { TOWERS, formatMediumDate } from '@/lib/utils';
 import TowerCard from '@/components/dashboard/TowerCard';
 import TrendChart from '@/components/dashboard/TrendChart';
 import SummaryRow from '@/components/dashboard/SummaryRow';
@@ -94,7 +94,6 @@ export default async function Dashboard() {
         <div className="max-w-4xl mx-auto flex items-center justify-between gap-4">
           <div>
             <h1 className="text-lg font-bold text-white leading-tight">Trinity World Water</h1>
-            <p className="text-slate-400 text-xs mt-0.5">{formatDate(today)}</p>
           </div>
           <ISTClock />
           <div className="flex items-center gap-2">
