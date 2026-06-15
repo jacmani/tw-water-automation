@@ -220,8 +220,10 @@ Three WhatsApp-shareable portrait PNG exports, generated via html-to-image at 2�
 |-------|------|---------|
 | `/` | Server Component | Dashboard — today's data + 7-day trend + infographic export |
 | `/upload` | Client Component | Mobile-first photo upload form |
+| `/history` | Client Component | Consumption history — daily table + heatmap, flags, CSV export |
 | `/committee` | Server Component | Public committee registry — Office Bearers, GC Chairs, GC Members by tower |
 | `/committee/admin` | Client Component | Committee admin — add/edit/deactivate members, start new term |
+| `/alerts` | Server Component | Email send history (alert_log table) |
 | `/api/upload` | POST Route Handler | Receives image → Supabase storage → Claude Vision → all DB tables |
 
 ---
@@ -451,3 +453,29 @@ details     jsonb         -- resend_id, error string, sandbox flag
 ```
 
 Every send (success or error) is logged regardless of sandbox/production mode. Verify sends at `/alerts`.
+
+---
+
+## History Page — Data Cross-Check Flagging Logic
+
+**File:** `src/components/history/flagging.ts`  
+**Used by:** `/history` daily table and heatmap (computed live, not stored).
+
+Each processed sheet is assigned one flag in priority order:
+
+| Priority | Flag | Trigger |
+|----------|------|---------|
+| 1 | `summary_misread` | `input_total` or `tower_usage` is null, OR `input_total > WS_sum × 1.5` |
+| 2 | `digit_drop` | Any DO row < 50,000 L or DR row < 5,000 L **when other rows of the same type are normal** |
+| 3 | `source_duplication` | Duplicate non-zero values exist in `water_sources.total` AND `WS_sum > input_total × 1.1` |
+| 4 | `unexplained_gap` | `abs(TC_sum − tower_usage) > 10,000 L` or `abs(WS_sum − input_total) > 10,000 L` |
+| 5 | `ok` | All sums within ±10 kL tolerance |
+
+**Abbreviations:**  
+`TC_sum` = sum of all `tower_consumption.total_ltrs` for the sheet  
+`WS_sum` = sum of all `water_sources.total` for the sheet  
+`TOLERANCE` = 10,000 L (±10 kL)
+
+The flag `detail` string contains specific numbers for the tooltip/expanded row explanation (e.g. "Output Δ +85.5 kL (TC 660.5 kL vs recorded 575.0 kL)").
+
+Low-confidence extraction values (`confidence < 0.8`) are rendered italic/dimmed in the history table with a `⚠` superscript — they're visually flagged without interrupting the layout.
