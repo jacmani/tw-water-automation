@@ -36,6 +36,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to create sheet record' }, { status: 500 });
   }
 
+  // Dedup invariant: the newest sheet for a date is canonical. Supersede any
+  // older sheets sharing this date so trend/dashboard aggregates don't double-count.
+  await supabase
+    .from('daily_sheets')
+    .update({ superseded: true })
+    .eq('date', date)
+    .neq('id', sheet.id);
+
   try {
     const towers: TowerName[] = ['Venus', 'Mercury', 'Neptune', 'Jupiter'];
 

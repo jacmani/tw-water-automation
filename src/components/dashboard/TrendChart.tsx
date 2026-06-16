@@ -11,7 +11,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import type { TrendChartPoint, TowerName } from '@/types';
-import { TOWER_COLORS, formatShortDate } from '@/lib/utils';
+import { TOWER_COLORS, formatShortDate, formatLitres } from '@/lib/utils';
 
 const TOWERS: TowerName[] = ['Venus', 'Mercury', 'Neptune', 'Jupiter'];
 
@@ -38,7 +38,7 @@ function CustomTooltip({ active, payload, label }: {
           <span className="w-2 h-2 rounded-full" style={{ background: entry.color }} />
           <span className="text-slate-400">{entry.name}:</span>
           <span className="text-white font-medium">
-            {entry.value != null ? `${entry.value.toLocaleString('en-IN')} L` : '—'}
+            {entry.value != null ? formatLitres(entry.value) : '—'}
           </span>
         </div>
       ))}
