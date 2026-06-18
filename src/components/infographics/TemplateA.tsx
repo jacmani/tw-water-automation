@@ -96,7 +96,7 @@ export default function TemplateA({ tower, date, animProgress = 1 }: Props) {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
             <div>
               <p style={{ color: '#94A3B8', fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', margin: 0 }}>
-                TRINITY WORLD WATER
+                TRINITY WORLD WATER CONSUMPTION
               </p>
               <p style={{ color: '#CBD5E1', fontSize: 11, margin: '2px 0 0' }}>
                 {formatMediumDate(date)}

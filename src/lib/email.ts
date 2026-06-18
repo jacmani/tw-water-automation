@@ -152,7 +152,7 @@ export async function sendWeeklyReport(supabase: Supabase, payload: WeeklyReport
   const to = await getAllActiveRecipients(supabase);
   if (!to.length) return;
 
-  const subject = `Trinity World Water — Weekly Report (${payload.weekStart} → ${payload.weekEnd})`;
+  const subject = `Trinity World Water Consumption — Weekly Report (${payload.weekStart} → ${payload.weekEnd})`;
   const html = weeklyReportHtml(payload);
 
   await send(supabase, { to, subject, html, alertType: 'weekly', sheetDate: payload.weekEnd });
@@ -172,7 +172,7 @@ export async function sendMonthlyReport(supabase: Supabase, payload: MonthlyRepo
   const to = await getAllActiveRecipients(supabase);
   if (!to.length) return;
 
-  const subject = `Trinity World Water — Monthly Report: ${payload.month}`;
+  const subject = `Trinity World Water Consumption — Monthly Report: ${payload.month}`;
   const html = monthlyReportHtml(payload);
 
   await send(supabase, { to, subject, html, alertType: 'monthly' });
@@ -316,7 +316,7 @@ function weeklyReportHtml(p: WeeklyReportPayload): string {
 
   const body = `
     <tr><td style="${CELL}border-bottom:1px solid #1E293B;">
-      <p style="color:#94A3B8;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;margin:0 0 4px;">Trinity World Water</p>
+      <p style="color:#94A3B8;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;margin:0 0 4px;">Trinity World Water Consumption</p>
       <h2 style="${H2}">Weekly Report</h2>
       <p style="${MUTED}margin:4px 0 0;">${p.weekStart} → ${p.weekEnd}</p>
     </td></tr>
@@ -362,7 +362,7 @@ function monthlyReportHtml(p: MonthlyReportPayload): string {
 
   const body = `
     <tr><td style="${CELL}border-bottom:1px solid #1E293B;">
-      <p style="color:#94A3B8;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;margin:0 0 4px;">Trinity World Water</p>
+      <p style="color:#94A3B8;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;margin:0 0 4px;">Trinity World Water Consumption</p>
       <h2 style="${H2}">Monthly Report</h2>
       <p style="${MUTED}margin:4px 0 0;">${p.month}</p>
     </td></tr>

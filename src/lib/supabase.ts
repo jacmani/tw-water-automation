@@ -179,3 +179,95 @@ export async function getAllCommitteeMembers(term: string): Promise<CommitteeMem
 
 // Unused imports kept for type exports
 export type { WaterSource, WaterLevel, Amenity };
+
+// ─────────────────────────────────────────
+// Logbook queries (005_logbook_full_schema)
+// ─────────────────────────────────────────
+
+import type {
+  DailyLog,
+  TowerMeterReading,
+  InputSourceReading,
+  AmenityMeterReading,
+  WaterLevelReading,
+  UtilityMeterReading,
+  DailyInflowSummary,
+  FullLogEntry,
+} from '@/types';
+
+export async function getMostRecentLogDate(): Promise<string | null> {
+  const { data } = await supabase
+    .from('daily_log')
+    .select('log_date')
+    .order('log_date', { ascending: false })
+    .limit(1)
+    .single();
+  return (data?.log_date as string) ?? null;
+}
+
+export async function getLogEntry(date: string): Promise<FullLogEntry | null> {
+  const { data: log } = await supabase
+    .from('daily_log')
+    .select('*')
+    .eq('log_date', date)
+    .single();
+
+  if (!log) return null;
+
+  const [
+    { data: tower_readings },
+    { data: source_readings },
+    { data: amenity_readings },
+    { data: water_levels },
+    { data: utility_meters },
+    { data: inflow_summary },
+  ] = await Promise.all([
+    supabase.from('tower_meter_readings').select('*').eq('log_date', date).order('tower').order('meter_type'),
+    supabase.from('input_source_readings').select('*').eq('log_date', date),
+    supabase.from('amenity_meter_readings').select('*').eq('log_date', date).order('amenity_type').order('location'),
+    supabase.from('water_level_readings').select('*').eq('log_date', date).order('time_slot'),
+    supabase.from('utility_meter_readings').select('*').eq('log_date', date).single(),
+    supabase.from('daily_inflow_summary').select('*').eq('log_date', date).single(),
+  ]);
+
+  return {
+    log: log as DailyLog,
+    tower_readings: (tower_readings ?? []) as TowerMeterReading[],
+    source_readings: (source_readings ?? []) as InputSourceReading[],
+    amenity_readings: (amenity_readings ?? []) as AmenityMeterReading[],
+    water_levels: (water_levels ?? []) as WaterLevelReading[],
+    utility_meters: (utility_meters ?? null) as UtilityMeterReading | null,
+    inflow_summary: (inflow_summary ?? null) as DailyInflowSummary | null,
+  };
+}
+
+export async function getDashboardLogbookData(date: string): Promise<{
+  inflow: DailyInflowSummary | null;
+  latestWaterLevel: WaterLevelReading | null;
+  amenities: AmenityMeterReading[];
+}> {
+  const [
+    { data: inflow },
+    { data: waterLevels },
+    { data: amenities },
+  ] = await Promise.all([
+    supabase.from('daily_inflow_summary').select('*').eq('log_date', date).single(),
+    supabase.from('water_level_readings').select('*').eq('log_date', date).order('time_slot', { ascending: false }).limit(1),
+    supabase.from('amenity_meter_readings').select('*').eq('log_date', date),
+  ]);
+
+  return {
+    inflow: (inflow ?? null) as DailyInflowSummary | null,
+    latestWaterLevel: ((waterLevels ?? [])[0] ?? null) as WaterLevelReading | null,
+    amenities: (amenities ?? []) as AmenityMeterReading[],
+  };
+}
+
+export async function getLogDates(limit = 30): Promise<string[]> {
+  const { data } = await supabase
+    .from('daily_log')
+    .select('log_date')
+    .order('log_date', { ascending: false })
+    .limit(limit);
+  return (data ?? []).map((d) => d.log_date as string);
+}

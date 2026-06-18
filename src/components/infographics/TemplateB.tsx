@@ -101,7 +101,7 @@ export default function TemplateB({ towers, date, totalConsumption, animProgress
         {/* Header */}
         <div style={{ background: 'rgba(30, 58, 138, 0.90)', padding: '20px 24px 16px', backdropFilter: 'blur(4px)' }}>
           <p style={{ color: '#BFDBFE', fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', margin: 0 }}>
-            TRINITY WORLD WATER
+            TRINITY WORLD WATER CONSUMPTION
           </p>
           <p style={{ color: '#fff', fontSize: 20, fontWeight: 800, margin: '4px 0 0', letterSpacing: '-0.01em' }}>
             Tower Wise Distribution

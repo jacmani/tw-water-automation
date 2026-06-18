@@ -157,7 +157,7 @@ export default function UploadPage() {
           </Link>
           <div>
             <h1 className="text-lg font-bold text-white">Upload Sheet</h1>
-            <p className="text-slate-400 text-xs">Trinity World Water</p>
+            <p className="text-slate-400 text-xs">Trinity World Water Consumption</p>
           </div>
         </div>
       </header>
@@ -366,6 +366,16 @@ export default function UploadPage() {
             <p className="text-slate-500 text-xs text-center">
               No login required. Date is read automatically from the sheet.
             </p>
+
+            <div className="border-t border-slate-800 pt-4 text-center">
+              <p className="text-slate-500 text-xs mb-2">Prefer to enter data manually?</p>
+              <Link
+                href="/upload/logbook"
+                className="inline-block text-sm text-blue-400 hover:text-blue-300 border border-blue-800 hover:border-blue-600 rounded-lg px-4 py-2 transition-colors"
+              >
+                Open Log Book Entry Form →
+              </Link>
+            </div>
           </form>
         )}
       </div>

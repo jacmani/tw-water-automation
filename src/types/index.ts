@@ -206,3 +206,123 @@ export interface TrendChartPoint {
   Neptune: number | null;
   Jupiter: number | null;
 }
+
+// ─────────────────────────────────────────
+// Logbook types (005_logbook_full_schema)
+// ─────────────────────────────────────────
+
+export type InputSourceName =
+  | 'mercury_venus_tanker'
+  | 'jupiter_neptune_tanker'
+  | 'venus_side_well_123'
+  | 'venus_side_well_4'
+  | 'neptune_side_well_5'
+  | 'neptune_side_well_6'
+  | 'open_well';
+
+export type AmenityType = 'car_wash' | 'swimming_pool';
+export type CarWashLocation = 'jupiter' | 'mercury' | 'venus' | 'neptune';
+export type PoolLocation = 'meter_1' | 'meter_2' | 'meter_3';
+export type AmenityLocation = CarWashLocation | PoolLocation;
+export type WaterLevelSlot = '06:00' | '12:00' | '18:00' | '00:00';
+
+export interface DailyLog {
+  id: string;
+  log_date: string;
+  technician_name: string | null;
+  fm_signed: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TowerMeterReading {
+  id: string;
+  log_date: string;
+  tower: TowerName;
+  meter_type: MeterType;
+  yesterday_reading: number | null;
+  today_reading: number | null;
+  total_in_ltrs: number | null;
+  consumption_yesterday: number | null;
+  consumption_today: number | null;
+  difference: number | null;
+}
+
+export interface InputSourceReading {
+  id: string;
+  log_date: string;
+  source_name: InputSourceName;
+  yesterday_reading: number | null;
+  today_reading: number | null;
+  consumption_yesterday: number | null;
+  consumption_today: number | null;
+  total: number | null;
+}
+
+export interface AmenityMeterReading {
+  id: string;
+  log_date: string;
+  amenity_type: AmenityType;
+  location: AmenityLocation;
+  yesterday: number | null;
+  today: number | null;
+  consumption: number | null;
+  cumulative: number | null;
+}
+
+export interface WaterLevelReading {
+  id: string;
+  log_date: string;
+  time_slot: WaterLevelSlot;
+  jupiter_do: number | null;
+  jupiter_dr: number | null;
+  collection_tank: number | null;
+  mercury_do: number | null;
+  mercury_dr: number | null;
+  cumulative_j: number | null;
+  cumulative_m: number | null;
+  cumulative_v: number | null;
+  cumulative_n: number | null;
+  cumulative_total: number | null;
+}
+
+export interface UtilityMeterReading {
+  id: string;
+  log_date: string;
+  p_hall_meter_1: number | null;
+  p_hall_meter_2: number | null;
+  wtp_1: number | null;
+  wtp_2: number | null;
+  venus_side_uf: number | null;
+  total_tankers: number | null;
+  consumption_yesterday: number | null;
+  consumption_today: number | null;
+  consumption_total: number | null;
+}
+
+export interface DailyInflowSummary {
+  id: string;
+  log_date: string;
+  water_inflow: number | null;
+  well_inflow: number | null;
+  tanker_inflow: number | null;
+  total_collection: number | null;
+  total_usage: number | null;
+  balance: number | null;
+  cumulative_water: number | null;
+  cumulative_well: number | null;
+  cumulative_tanker: number | null;
+  cumulative_total_collection: number | null;
+  cumulative_total_usage: number | null;
+  cumulative_balance: number | null;
+}
+
+export interface FullLogEntry {
+  log: DailyLog;
+  tower_readings: TowerMeterReading[];
+  source_readings: InputSourceReading[];
+  amenity_readings: AmenityMeterReading[];
+  water_levels: WaterLevelReading[];
+  utility_meters: UtilityMeterReading | null;
+  inflow_summary: DailyInflowSummary | null;
+}

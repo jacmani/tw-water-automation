@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { getMostRecentSheet, wasSheetUploadedToday, getTowerConsumptionForSheet, getSummaryForSheet, getTowerTrend } from '@/lib/supabase';
+import { getMostRecentSheet, wasSheetUploadedToday, getTowerConsumptionForSheet, getSummaryForSheet, getTowerTrend, getMostRecentLogDate, getDashboardLogbookData } from '@/lib/supabase';
 import { TOWERS, formatMediumDate } from '@/lib/utils';
 import TowerCard from '@/components/dashboard/TowerCard';
 import TrendChart from '@/components/dashboard/TrendChart';
@@ -7,6 +7,9 @@ import SummaryRow from '@/components/dashboard/SummaryRow';
 import MissingSheetAlert from '@/components/dashboard/MissingSheetAlert';
 import InfographicPanel from '@/components/dashboard/InfographicPanel';
 import ISTClock from '@/components/dashboard/ISTClock';
+import InflowSummaryPanel from '@/components/dashboard/InflowSummaryPanel';
+import WaterLevelsPanel from '@/components/dashboard/WaterLevelsPanel';
+import AmenitiesPanel from '@/components/dashboard/AmenitiesPanel';
 import type { DashboardData, TrendChartPoint } from '@/types';
 
 export const revalidate = 60;
@@ -14,21 +17,29 @@ export const revalidate = 60;
 export default async function Dashboard() {
   const today = new Date().toISOString().split('T')[0];
 
-  const [recentSheet, trendData, hasTodaySheet] = await Promise.all([
+  const [recentSheet, trendData, hasTodaySheet, recentLogDate] = await Promise.all([
     getMostRecentSheet(),
     getTowerTrend(7),
     wasSheetUploadedToday(today),
+    getMostRecentLogDate(),
   ]);
   const sheetDate = recentSheet?.date ?? today;
 
   let towerConsumption: Awaited<ReturnType<typeof getTowerConsumptionForSheet>> = [];
   let summary: Awaited<ReturnType<typeof getSummaryForSheet>> = null;
 
+  let logbookPanelData: Awaited<ReturnType<typeof getDashboardLogbookData>> = {
+    inflow: null, latestWaterLevel: null, amenities: [],
+  };
+
   if (recentSheet) {
     [towerConsumption, summary] = await Promise.all([
       getTowerConsumptionForSheet(recentSheet.id),
       getSummaryForSheet(recentSheet.id),
     ]);
+  }
+  if (recentLogDate) {
+    logbookPanelData = await getDashboardLogbookData(recentLogDate);
   }
 
   const towers = TOWERS.map((tower) => {
@@ -93,10 +104,16 @@ export default async function Dashboard() {
       <header className="bg-slate-900 border-b border-slate-800 px-4 py-4 sticky top-0 z-10">
         <div className="max-w-4xl mx-auto flex items-center justify-between gap-4">
           <div>
-            <h1 className="text-lg font-bold text-white leading-tight">Trinity World Water</h1>
+            <h1 className="text-lg font-bold text-white leading-tight">Trinity World Water Consumption</h1>
           </div>
           <ISTClock />
           <div className="flex items-center gap-2">
+            <Link
+              href="/logbook"
+              className="text-slate-400 hover:text-white text-sm font-medium px-3 py-2 rounded-lg transition-colors"
+            >
+              Log Book
+            </Link>
             <Link
               href="/history"
               className="text-slate-400 hover:text-white text-sm font-medium px-3 py-2 rounded-lg transition-colors"
@@ -147,6 +164,23 @@ export default async function Dashboard() {
             ))}
           </div>
         </section>
+
+        {/* Logbook panels — from manual log entry */}
+        {recentLogDate && (
+          <>
+            <section>
+              <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-3">
+                Inflow / Usage — {formatMediumDate(recentLogDate)}
+              </p>
+              <InflowSummaryPanel data={logbookPanelData.inflow} date={null} />
+            </section>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <WaterLevelsPanel data={logbookPanelData.latestWaterLevel} />
+              <AmenitiesPanel data={logbookPanelData.amenities} />
+            </div>
+          </>
+        )}
 
         {chartData.length > 0 && (
           <section>
