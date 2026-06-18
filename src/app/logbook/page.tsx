@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { getLogEntry, getMostRecentLogDate, getLogDates } from '@/lib/supabase';
 import { formatDate, formatMediumDate } from '@/lib/utils';
+import PrintButton from '@/components/logbook/PrintButton';
 import type {
   TowerMeterReading,
   InputSourceReading,
@@ -194,12 +195,7 @@ export default async function LogbookPage({
             >
               + Add Entry
             </Link>
-            <button
-              onClick={() => typeof window !== 'undefined' && window.print()}
-              className="text-xs border border-slate-700 hover:border-slate-500 text-slate-400 hover:text-white px-3 py-1.5 rounded-lg transition-colors"
-            >
-              Print
-            </button>
+            <PrintButton />
           </div>
         </div>
       </header>
