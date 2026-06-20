@@ -1,5 +1,10 @@
 import type { AmenityMeterReading } from '@/types';
-import { formatLitres } from '@/lib/utils';
+
+// Amenity meter readings are in kilolitres (kL), not litres
+function fmtKL(v: number | null | undefined): string {
+  if (v == null) return '—';
+  return `${v.toLocaleString('en-IN')} kL`;
+}
 
 interface Props {
   data: AmenityMeterReading[];
@@ -48,13 +53,13 @@ export default function AmenitiesPanel({ data }: Props) {
               {carWash.map((r) => (
                 <div key={r.location} className="flex justify-between text-xs">
                   <span className="text-slate-400">{LOC_LABEL[r.location] ?? r.location}</span>
-                  <span className="text-slate-300">{formatLitres(r.consumption)}</span>
+                  <span className="text-slate-300">{fmtKL(r.consumption)}</span>
                 </div>
               ))}
             </div>
             <div className="mt-1.5 pt-1.5 border-t border-slate-800 flex justify-between text-xs font-semibold">
               <span className="text-slate-400">Total</span>
-              <span className="text-white">{formatLitres(carWashTotal)}</span>
+              <span className="text-white">{fmtKL(carWashTotal)}</span>
             </div>
           </div>
         )}
@@ -67,13 +72,13 @@ export default function AmenitiesPanel({ data }: Props) {
               {pool.map((r) => (
                 <div key={r.location} className="flex justify-between text-xs">
                   <span className="text-slate-400">{LOC_LABEL[r.location] ?? r.location}</span>
-                  <span className="text-slate-300">{formatLitres(r.consumption)}</span>
+                  <span className="text-slate-300">{fmtKL(r.consumption)}</span>
                 </div>
               ))}
             </div>
             <div className="mt-1.5 pt-1.5 border-t border-slate-800 flex justify-between text-xs font-semibold">
               <span className="text-slate-400">Total</span>
-              <span className="text-white">{formatLitres(poolTotal)}</span>
+              <span className="text-white">{fmtKL(poolTotal)}</span>
             </div>
           </div>
         )}
