@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { revalidatePath } from 'next/cache';
 import { createServerClient } from '@/lib/supabase';
 
 function n(v: unknown): number | null {
@@ -167,6 +168,10 @@ export async function POST(request: NextRequest) {
       }, { onConflict: 'log_date' });
     if (error) console.error('daily_inflow_summary upsert error:', error);
   }
+
+  // Purge ISR cache so dashboard shows new logbook data immediately
+  revalidatePath('/');
+  revalidatePath('/logbook');
 
   return NextResponse.json({ success: true, log_date });
 }
