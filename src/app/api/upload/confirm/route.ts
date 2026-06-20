@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { revalidatePath } from 'next/cache';
 import { createServerClient } from '@/lib/supabase';
 import { sendSpikeAlert } from '@/lib/email';
 import type { ExtractionResult, TowerName } from '@/types';
@@ -173,6 +174,10 @@ export async function POST(request: NextRequest) {
       }
     }
     await Promise.all(spikes);
+
+    // Purge ISR cache so dashboard shows new data immediately
+    revalidatePath('/');
+    revalidatePath('/history');
 
     return NextResponse.json({
       success: true,
