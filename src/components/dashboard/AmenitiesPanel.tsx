@@ -27,8 +27,8 @@ export default function AmenitiesPanel({ data }: Props) {
     );
   }
 
-  const carWash = data.filter((r) => r.amenity_type === 'car_wash');
-  const pool = data.filter((r) => r.amenity_type === 'swimming_pool');
+  const carWash = data.filter((r) => r.amenity_type === 'Car Wash' || r.amenity_type === 'car_wash');
+  const pool = data.filter((r) => r.amenity_type === 'Swimming Pool' || r.amenity_type === 'swimming_pool');
 
   const carWashTotal = carWash.reduce((s, r) => s + (r.consumption ?? 0), 0);
   const poolTotal = pool.reduce((s, r) => s + (r.consumption ?? 0), 0);
