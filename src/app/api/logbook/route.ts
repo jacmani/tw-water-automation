@@ -79,24 +79,24 @@ export async function POST(request: NextRequest) {
   }
 
   // ── Amenity meter readings ────────────────────────────────────────────────
-  // Normalise amenity_type to match DB CHECK constraint values.
-  // The form and logbook page use display strings; the schema uses the same
-  // display strings after migration 006. Until 006 is applied, map to snake_case.
+  // Normalise amenity_type and location to match DB CHECK constraints (005).
+  // Migration 006 will update the constraints to accept display values directly.
   const amenityTypeMap: Record<string, string> = {
-    'Car Wash': 'car_wash',
-    'Swimming Pool': 'swimming_pool',
-    'Party Hall': 'party_hall',
-    // pass-through if already correct
-    car_wash: 'car_wash',
-    swimming_pool: 'swimming_pool',
-    party_hall: 'party_hall',
+    'Car Wash': 'car_wash', 'Swimming Pool': 'swimming_pool', 'Party Hall': 'party_hall',
+    car_wash: 'car_wash', swimming_pool: 'swimming_pool', party_hall: 'party_hall',
+  };
+  const locationMap: Record<string, string> = {
+    Jupiter: 'jupiter', Mercury: 'mercury', Venus: 'venus', Neptune: 'neptune',
+    'Meter 1': 'meter_1', 'Meter 2': 'meter_2', 'Meter 3': 'meter_3',
+    jupiter: 'jupiter', mercury: 'mercury', venus: 'venus', neptune: 'neptune',
+    meter_1: 'meter_1', meter_2: 'meter_2', meter_3: 'meter_3',
   };
   const amenityRows = (body.amenity_readings as unknown[]) ?? [];
   if (amenityRows.length > 0) {
     const rows = (amenityRows as Record<string, unknown>[]).map((r) => ({
       log_date,
       amenity_type: amenityTypeMap[r.amenity_type as string] ?? r.amenity_type,
-      location: r.location,
+      location: locationMap[r.location as string] ?? r.location,
       yesterday: n(r.yesterday),
       today: n(r.today),
       consumption: n(r.consumption),
