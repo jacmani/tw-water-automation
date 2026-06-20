@@ -79,24 +79,15 @@ export async function POST(request: NextRequest) {
   }
 
   // ── Amenity meter readings ────────────────────────────────────────────────
-  // Normalise amenity_type and location to match DB CHECK constraints (005).
-  // Migration 006 will update the constraints to accept display values directly.
-  const amenityTypeMap: Record<string, string> = {
-    'Car Wash': 'car_wash', 'Swimming Pool': 'swimming_pool', 'Party Hall': 'party_hall',
-    car_wash: 'car_wash', swimming_pool: 'swimming_pool', party_hall: 'party_hall',
-  };
-  const locationMap: Record<string, string> = {
-    Jupiter: 'jupiter', Mercury: 'mercury', Venus: 'venus', Neptune: 'neptune',
-    'Meter 1': 'meter_1', 'Meter 2': 'meter_2', 'Meter 3': 'meter_3',
-    jupiter: 'jupiter', mercury: 'mercury', venus: 'venus', neptune: 'neptune',
-    meter_1: 'meter_1', meter_2: 'meter_2', meter_3: 'meter_3',
-  };
+  // Schema (post-migration 006) accepts display values directly:
+  // amenity_type: 'Car Wash' | 'Swimming Pool' | 'Party Hall'
+  // location: 'Jupiter' | 'Mercury' | 'Venus' | 'Neptune' | 'Meter 1–7' | etc.
   const amenityRows = (body.amenity_readings as unknown[]) ?? [];
   if (amenityRows.length > 0) {
     const rows = (amenityRows as Record<string, unknown>[]).map((r) => ({
       log_date,
-      amenity_type: amenityTypeMap[r.amenity_type as string] ?? r.amenity_type,
-      location: locationMap[r.location as string] ?? r.location,
+      amenity_type: r.amenity_type,
+      location: r.location,
       yesterday: n(r.yesterday),
       today: n(r.today),
       consumption: n(r.consumption),
@@ -109,18 +100,12 @@ export async function POST(request: NextRequest) {
   }
 
   // ── Water level readings ──────────────────────────────────────────────────
-  // Normalise time_slot to match DB CHECK constraint: '06:00','12:00','18:00','00:00'
-  // The form sends '6AM','12PM','6PM','12AM'; migration 006 will change the CHECK
-  // to accept these display values. Until then, map them here.
-  const timeSlotMap: Record<string, string> = {
-    '6AM': '06:00', '12PM': '12:00', '6PM': '18:00', '12AM': '00:00',
-    '06:00': '06:00', '12:00': '12:00', '18:00': '18:00', '00:00': '00:00',
-  };
+  // Schema (post-migration 006) accepts display values directly: '6AM','12PM','6PM','12AM'
   const levelRows = (body.water_levels as unknown[]) ?? [];
   if (levelRows.length > 0) {
     const rows = (levelRows as Record<string, unknown>[]).map((r) => ({
       log_date,
-      time_slot: timeSlotMap[r.time_slot as string] ?? r.time_slot,
+      time_slot: r.time_slot,
       jupiter_do: n(r.jupiter_do),
       jupiter_dr: n(r.jupiter_dr),
       collection_tank: n(r.collection_tank),
