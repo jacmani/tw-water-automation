@@ -313,16 +313,16 @@ export default async function LogbookPage({
             )}
 
             {/* Car Wash */}
-            {entry.amenity_readings.some((r) => r.amenity_type === 'car_wash') && (
+            {entry.amenity_readings.some((r) => r.amenity_type === 'Car Wash') && (
               <SectionCard title="Car Wash Meters">
-                <AmenityTable rows={entry.amenity_readings} type="car_wash" locs={['jupiter', 'mercury', 'venus', 'neptune']} />
+                <AmenityTable rows={entry.amenity_readings} type="Car Wash" locs={['Jupiter', 'Mercury', 'Venus', 'Neptune']} />
               </SectionCard>
             )}
 
             {/* Swimming Pool */}
-            {entry.amenity_readings.some((r) => r.amenity_type === 'swimming_pool') && (
+            {entry.amenity_readings.some((r) => r.amenity_type === 'Swimming Pool') && (
               <SectionCard title="Swimming Pool Meters">
-                <AmenityTable rows={entry.amenity_readings} type="swimming_pool" locs={['meter_1', 'meter_2', 'meter_3']} />
+                <AmenityTable rows={entry.amenity_readings} type="Swimming Pool" locs={['Meter 3', 'Meter 4', 'Meter 5']} />
               </SectionCard>
             )}
 
