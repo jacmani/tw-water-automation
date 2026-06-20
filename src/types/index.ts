@@ -220,11 +220,11 @@ export type InputSourceName =
   | 'neptune_side_well_6'
   | 'open_well';
 
-export type AmenityType = 'car_wash' | 'swimming_pool';
-export type CarWashLocation = 'jupiter' | 'mercury' | 'venus' | 'neptune';
-export type PoolLocation = 'meter_1' | 'meter_2' | 'meter_3';
-export type AmenityLocation = CarWashLocation | PoolLocation;
-export type WaterLevelSlot = '06:00' | '12:00' | '18:00' | '00:00';
+export type AmenityType = 'Car Wash' | 'Swimming Pool' | 'Party Hall';
+export type CarWashLocation = 'Jupiter' | 'Mercury' | 'Venus' | 'Neptune';
+export type PoolLocation = 'Meter 1' | 'Meter 2' | 'Meter 3' | 'Meter 4' | 'Meter 5';
+export type AmenityLocation = CarWashLocation | PoolLocation | string;
+export type WaterLevelSlot = '6AM' | '12PM' | '6PM' | '12AM';
 
 export interface DailyLog {
   id: string;
