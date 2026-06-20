@@ -79,11 +79,23 @@ export async function POST(request: NextRequest) {
   }
 
   // ── Amenity meter readings ────────────────────────────────────────────────
+  // Normalise amenity_type to match DB CHECK constraint values.
+  // The form and logbook page use display strings; the schema uses the same
+  // display strings after migration 006. Until 006 is applied, map to snake_case.
+  const amenityTypeMap: Record<string, string> = {
+    'Car Wash': 'car_wash',
+    'Swimming Pool': 'swimming_pool',
+    'Party Hall': 'party_hall',
+    // pass-through if already correct
+    car_wash: 'car_wash',
+    swimming_pool: 'swimming_pool',
+    party_hall: 'party_hall',
+  };
   const amenityRows = (body.amenity_readings as unknown[]) ?? [];
   if (amenityRows.length > 0) {
     const rows = (amenityRows as Record<string, unknown>[]).map((r) => ({
       log_date,
-      amenity_type: r.amenity_type,
+      amenity_type: amenityTypeMap[r.amenity_type as string] ?? r.amenity_type,
       location: r.location,
       yesterday: n(r.yesterday),
       today: n(r.today),
@@ -97,11 +109,18 @@ export async function POST(request: NextRequest) {
   }
 
   // ── Water level readings ──────────────────────────────────────────────────
+  // Normalise time_slot to match DB CHECK constraint: '06:00','12:00','18:00','00:00'
+  // The form sends '6AM','12PM','6PM','12AM'; migration 006 will change the CHECK
+  // to accept these display values. Until then, map them here.
+  const timeSlotMap: Record<string, string> = {
+    '6AM': '06:00', '12PM': '12:00', '6PM': '18:00', '12AM': '00:00',
+    '06:00': '06:00', '12:00': '12:00', '18:00': '18:00', '00:00': '00:00',
+  };
   const levelRows = (body.water_levels as unknown[]) ?? [];
   if (levelRows.length > 0) {
     const rows = (levelRows as Record<string, unknown>[]).map((r) => ({
       log_date,
-      time_slot: r.time_slot,
+      time_slot: timeSlotMap[r.time_slot as string] ?? r.time_slot,
       jupiter_do: n(r.jupiter_do),
       jupiter_dr: n(r.jupiter_dr),
       collection_tank: n(r.collection_tank),
