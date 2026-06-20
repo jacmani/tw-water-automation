@@ -121,7 +121,8 @@ export async function POST(request: NextRequest) {
 
   // ── Utility meter readings ────────────────────────────────────────────────
   const util = body.utility_meters as Record<string, unknown> | null;
-  if (util) {
+  const utilHasData = util && Object.values(util).some((v) => v !== '' && v !== null && v !== undefined);
+  if (utilHasData) {
     const { error } = await supabase
       .from('utility_meter_readings')
       .upsert({
@@ -141,7 +142,8 @@ export async function POST(request: NextRequest) {
 
   // ── Daily inflow summary ──────────────────────────────────────────────────
   const inflow = body.inflow_summary as Record<string, unknown> | null;
-  if (inflow) {
+  const inflowHasData = inflow && Object.values(inflow).some((v) => v !== '' && v !== null && v !== undefined);
+  if (inflowHasData) {
     const { error } = await supabase
       .from('daily_inflow_summary')
       .upsert({
