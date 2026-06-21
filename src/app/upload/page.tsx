@@ -66,7 +66,6 @@ function useExtractingProgress(active: boolean) {
 function ProgressDisplay({ status, preview }: { status: Status; preview: string | null }) {
   const stepIdx = getStepIndex(status);
   const extractingProgress = useExtractingProgress(status === 'extracting');
-
   let overallPct = 0;
   if (stepIdx === 0) overallPct = 8;
   if (stepIdx === 1) overallPct = 33 + (extractingProgress / 100) * 34;
@@ -76,17 +75,11 @@ function ProgressDisplay({ status, preview }: { status: Status; preview: string 
     <div className="space-y-6">
       {preview && (
         <div className="rounded-xl overflow-hidden bg-slate-800 border border-slate-700 relative">
-          <Image
-            src={preview}
-            alt="Sheet being processed"
-            width={400}
-            height={240}
-            className="w-full object-contain max-h-52 opacity-60"
-            unoptimized
-          />
+          <Image src={preview} alt="Sheet being processed" width={400} height={240}
+            className="w-full object-contain max-h-52 opacity-60" unoptimized />
           {status === 'extracting' && (
             <div className="absolute inset-0 flex items-center justify-center">
-              <div className="bg-slate-900/85 backdrop-blur-sm rounded-xl px-4 py-3 flex items-center gap-3 max-w-xs text-center">
+              <div className="bg-slate-900/85 backdrop-blur-sm rounded-xl px-4 py-3 flex items-center gap-3 max-w-xs">
                 <span className="w-5 h-5 border-2 border-slate-600 border-t-blue-400 rounded-full animate-spin flex-shrink-0" />
                 <span className="text-blue-300 text-sm font-medium leading-snug">
                   Artificial Intelligence is reading the handwritten log sheet uploaded
@@ -96,295 +89,247 @@ function ProgressDisplay({ status, preview }: { status: Status; preview: string 
           )}
         </div>
       )}
-
       <div className="flex justify-between text-xs mb-1 px-0.5">
         {STEPS.map((s, i) => (
-          <span
-            key={s.id}
-            className={
-              i < stepIdx ? 'text-emerald-400 font-medium'
-              : i === stepIdx ? 'text-blue-300 font-semibold'
-              : 'text-slate-600'
-            }
-          >
-            {i < stepIdx ? '✓ ' : ''}{s.label}
-          </span>
+          <span key={s.id} className={
+            i < stepIdx ? 'text-emerald-400 font-medium'
+            : i === stepIdx ? 'text-blue-300 font-semibold'
+            : 'text-slate-600'
+          }>{i < stepIdx ? '✓ ' : ''}{s.label}</span>
         ))}
       </div>
-
       <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
-        <div
-          className="h-full bg-gradient-to-r from-blue-600 to-blue-400 rounded-full transition-all duration-700 ease-out"
-          style={{ width: `${overallPct}%` }}
-        />
+        <div className="h-full bg-gradient-to-r from-blue-600 to-blue-400 rounded-full transition-all duration-700 ease-out"
+          style={{ width: `${overallPct}%` }} />
       </div>
-
       <p className="text-center text-slate-400 text-sm">
         {status === 'compressing' && 'Preparing your photo…'}
         {status === 'extracting' && 'This takes 15–30 seconds. Please wait.'}
         {status === 'saving' && 'Writing to database…'}
       </p>
-
       <div className="flex justify-center gap-2">
         {STEPS.map((s, i) => (
-          <div
-            key={s.id}
-            className={`w-2 h-2 rounded-full transition-all duration-300 ${
-              i < stepIdx ? 'bg-emerald-400'
-              : i === stepIdx ? 'bg-blue-400 scale-125'
-              : 'bg-slate-700'
-            }`}
-          />
+          <div key={s.id} className={`w-2 h-2 rounded-full transition-all duration-300 ${
+            i < stepIdx ? 'bg-emerald-400' : i === stepIdx ? 'bg-blue-400 scale-125' : 'bg-slate-700'
+          }`} />
         ))}
       </div>
     </div>
   );
 }
 
-// ── Sheet region map ────────────────────────────────────────────────────────
-// Each region is [x%, y%, w%, h%] as percentage of image dimensions.
-// Coordinates are calibrated to the Trinity World A3 sheet template.
-// Sections (top→bottom): Tower (0–28%), Sources (28–47%), Water Levels (47–62%),
-//   Car Wash/Pool (62–75%), Party Hall (75–84%), Summary (84–100%)
+// ── Flag parsing ─────────────────────────────────────────────────────────────
+// Section bands as % of image height. Calibrated to the Trinity World sheet.
+// The sheet has these sections top-to-bottom:
+//   Title + date header:    0  – 6%
+//   Tower meter readings:   6  – 30%
+//   Input source readings:  30 – 52%
+//   Car Wash / Pool:        52 – 64%
+//   Water level readings:   64 – 78%
+//   Party hall / utility:   78 – 88%
+//   Total Inflow summary:   88 – 100%
 
-interface Region { x: number; y: number; w: number; h: number; }
-
-const TOWER_ROWS: Record<string, number> = {
-  'venus do': 5.5, 'venus dr': 8,
-  'mercury do': 10.5, 'mercury dr': 13,
-  'neptune do': 15.5, 'neptune dr': 18,
-  'jupiter do': 20.5, 'jupiter dr': 23,
-};
-
-const SOURCE_ROWS: Record<string, number> = {
-  'm+v do with mtr': 30, 'mercury': 30,
-  'j+n do with jtr': 32.5, 'jupiter': 32.5,
-  'v well 1+2+3': 35, 'venus side well 1': 35,
-  'v well 4+b1+b2': 37.5, 'v well 4': 37.5,
-  'n well 5': 40, 'neptune side well 5': 40,
-  'n well 6': 42.5, 'neptune side well 6': 42.5,
-  'on outside well': 45, 'open well': 45,
-  'kingsley': 47,
-};
-
-const AMENITY_ROWS: Record<string, number> = {
-  'jupiter': 64.5, 'mercury': 67, 'venus': 69.5, 'neptune': 72,
-  'meter 1': 64.5, 'meter 2': 67, 'meter 3': 64.5, 'meter 4': 67, 'meter 5': 69.5,
-};
-
-const SUMMARY_FIELDS: Record<string, number> = {
-  'v_side': 85.5, 'v side': 85.5,
-  'n_side': 87.5, 'n side': 87.5,
-  'jtr_tanker': 89.5, 'jtr tanker': 89.5,
-  'mtr_tanker': 91.5, 'mtr tanker': 91.5,
-  'input_total': 93.5, 'in put total': 93.5,
-  'tower_usage': 95.5, 'tower usage': 95.5,
-  'diff': 97.5,
-};
-
-const WATER_LEVEL_ROWS: Record<string, number> = {
-  '6am': 49, '06:00': 49,
-  '12pm': 52, '12:00': 52,
-  '6pm': 55, '18:00': 55,
-  '12am': 58, '00:00': 58,
-};
-
-function parseFlag(raw: string): { region: Region | null; label: string } {
-  const lower = raw.toLowerCase();
-
-  // ── Tower section ────────────────────────────────────────────────
-  const towerMatch = lower.match(/tower_consumption\[(\w+)\]\[(\w+)\]|towers?\.(venus|mercury|neptune|jupiter)\.(do|dr)/);
-  if (towerMatch) {
-    const tower = (towerMatch[1] || towerMatch[3] || '').toLowerCase();
-    const type = (towerMatch[2] || towerMatch[4] || '').toLowerCase();
-    const key = `${tower} ${type}`;
-    const y = TOWER_ROWS[key];
-    if (y) return { region: { x: 0, y, w: 100, h: 2.5 }, label: humanLabel(raw) };
-  }
-
-  // ── Water sources ────────────────────────────────────────────────
-  const srcMatch = lower.match(/water_sources?\[([^\]]+)\]/);
-  if (srcMatch) {
-    const src = srcMatch[1].toLowerCase();
-    for (const [key, y] of Object.entries(SOURCE_ROWS)) {
-      if (src.includes(key) || key.includes(src.split(':')[0])) {
-        return { region: { x: 0, y, w: 100, h: 2.3 }, label: humanLabel(raw) };
-      }
-    }
-    // fallback: sources section
-    return { region: { x: 0, y: 28, w: 100, h: 19 }, label: humanLabel(raw) };
-  }
-
-  // ── Summary section ──────────────────────────────────────────────
-  if (lower.includes('summary.')) {
-    const field = lower.replace('summary.', '').split(':')[0].trim();
-    for (const [key, y] of Object.entries(SUMMARY_FIELDS)) {
-      if (field.includes(key) || key.includes(field)) {
-        return { region: { x: 0, y, w: 100, h: 2 }, label: humanLabel(raw) };
-      }
-    }
-    return { region: { x: 0, y: 84, w: 100, h: 16 }, label: humanLabel(raw) };
-  }
-
-  // ── Amenities ────────────────────────────────────────────────────
-  if (lower.includes('amenities') || lower.includes('car wash') || lower.includes('swimming pool')) {
-    const locMatch = lower.match(/\.(jupiter|mercury|venus|neptune|meter [1-7])/);
-    const loc = locMatch ? locMatch[1] : null;
-    const isPool = lower.includes('swimming pool') || lower.includes('pool');
-    const baseY = isPool ? 64 : 62;
-    const y = loc ? (AMENITY_ROWS[loc] ?? baseY) : baseY;
-    const x = isPool ? 50 : 0;
-    return { region: { x, y, w: 50, h: 2.3 }, label: humanLabel(raw) };
-  }
-
-  // ── Water levels ─────────────────────────────────────────────────
-  if (lower.includes('water_level') || lower.includes('tank') || lower.includes('level')) {
-    const slotMatch = lower.match(/6am|12pm|6pm|12am|06:00|12:00|18:00|00:00/);
-    const slot = slotMatch ? slotMatch[0] : null;
-    const y = slot ? (WATER_LEVEL_ROWS[slot] ?? 47) : 47;
-    return { region: { x: 0, y, w: 100, h: 2.5 }, label: humanLabel(raw) };
-  }
-
-  return { region: null, label: humanLabel(raw) };
+interface FlagInfo {
+  sectionY: number;   // % from top — start of highlight band
+  sectionH: number;   // % height of band
+  sectionName: string;
+  rowHint: string;    // which row/cell within the section
+  problem: string;    // plain-English problem
+  color: string;      // hex
 }
 
-/** Convert a raw flagged_field string to a plain-English grandmother-friendly label */
-function humanLabel(raw: string): string {
+const COLORS = ['#EF4444','#F97316','#EAB308','#22C55E','#3B82F6','#A855F7','#EC4899'];
+
+function parseFlag(raw: string, idx: number): FlagInfo {
   const lower = raw.toLowerCase();
+  const color = COLORS[idx % COLORS.length];
 
-  // Section prefix → human section name
-  let section = '';
-  let detail = raw.split(':').slice(1).join(':').trim();
-
-  if (lower.startsWith('tower_consumption') || lower.includes('towers.')) {
-    const m = raw.match(/\[(venus|mercury|neptune|jupiter)\]\[(do|dr)\]/i);
-    if (m) section = `Tower — ${m[1]} ${m[2] === 'DO' ? 'Domestic' : 'Drinking'} water`;
-  } else if (lower.startsWith('water_sources')) {
-    const m = raw.match(/\[([^\]]+)\]/);
-    section = m ? `Water Source — ${m[1]}` : 'Water Sources section';
-  } else if (lower.startsWith('summary.')) {
-    const field = raw.split('.')[1]?.split(':')[0];
-    const names: Record<string, string> = {
-      v_side: 'Summary — Venus Side Well total',
-      n_side: 'Summary — Neptune Side Well total',
-      jtr_tanker: 'Summary — JTR Tanker total',
-      mtr_tanker: 'Summary — MTR Tanker total',
-      input_total: 'Summary — Total Water Input',
-      tower_usage: 'Summary — Total Tower Usage',
-      diff: 'Summary — Difference (Input vs Output)',
+  // ── Tower readings (section 2) ────────────────────────────────────
+  if (lower.match(/tower|venus do|venus dr|mercury do|mercury dr|neptune|jupiter do|jupiter dr/)) {
+    const towerMap: Record<string, string> = {
+      venus: 'Venus Tower', mercury: 'Mercury Tower',
+      neptune: 'Neptune Tower', jupiter: 'Jupiter Tower',
     };
-    section = names[field ?? ''] ?? `Summary — ${field}`;
-  } else if (lower.includes('amenities') || lower.includes('car wash') || lower.includes('swimming pool')) {
-    const m = raw.match(/amenities?\.(Car Wash|Swimming Pool|Party Hall)\.([^:]+)/i);
-    section = m ? `${m[1]} meter — ${m[2]}` : 'Amenities section';
-  } else if (lower.includes('water_level') || lower.includes('level')) {
-    section = 'Water Tank Levels';
-  } else {
-    section = raw.split(':')[0].replace(/[._\[\]]/g, ' ').trim();
+    const typeMap: Record<string, string> = { do: 'Domestic (overhead)', dr: 'Drinking water' };
+    const tm = lower.match(/(venus|mercury|neptune|jupiter)/);
+    const dm = lower.match(/\b(do|dr)\b/);
+    const rowHint = tm ? `${towerMap[tm[1]] ?? tm[1]} — ${dm ? typeMap[dm[1]] ?? dm[1] : ''} row` : 'Tower readings table';
+    return { sectionY: 6, sectionH: 24, sectionName: 'Tower Meter Readings', rowHint, problem: cleanProblem(raw), color };
   }
 
-  // Simplify the detail message
-  const friendly = detail
-    .replace(/blank\/unreadable/gi, 'Value is blank or unreadable in the photo')
-    .replace(/out_of_range/gi, 'Number looks unusual — please double-check')
-    .replace(/not present on sheet/gi, 'This row is missing from this sheet format')
-    .replace(/only yesterday reading visible/gi, 'Only yesterday\'s reading is visible; today\'s is missing')
-    .replace(/consumption noted as (\S+)/gi, 'Consumption reading of $1 looks unusual')
-    .replace(/reading uncertain/gi, 'Reading is unclear — please verify against the original sheet')
-    .replace(/\(([^)]+)\)/gi, '')
-    .trim();
+  // ── Water sources (section 3) ─────────────────────────────────────
+  if (lower.match(/water_source|source|well|tanker|kingsley/)) {
+    const srcLabels: Record<string, string> = {
+      'v well 4': 'Venus Side Well 4+B1+B2 row',
+      'b1+b2': 'Venus Side Well 4+B1+B2 row',
+      'v well 1': 'Venus Side Well 1+2+3 row',
+      'n well 5': 'Neptune Side Well 5 row',
+      'n well 6': 'Neptune Side Well 6 row',
+      'open well': 'Open Well row',
+      'on outside': 'ON Outside Well row',
+      'kingsley': 'Kingsley row',
+      'mtr': 'Mercury+Venus Tanker row',
+      'jtr': 'Jupiter+Neptune Tanker row',
+    };
+    let rowHint = 'Input source readings table';
+    for (const [k, v] of Object.entries(srcLabels)) {
+      if (lower.includes(k)) { rowHint = v; break; }
+    }
+    return { sectionY: 30, sectionH: 22, sectionName: 'Input Source / Well Readings', rowHint, problem: cleanProblem(raw), color };
+  }
 
-  return `${section}${friendly ? ' — ' + friendly : ''}`;
+  // ── Amenities (section 4) ─────────────────────────────────────────
+  if (lower.match(/amenit|car wash|swimming pool|pool|party hall/)) {
+    const isPool = lower.includes('swimming pool') || lower.includes('pool');
+    const isParty = lower.includes('party hall');
+    const locM = lower.match(/(jupiter|mercury|venus|neptune|meter [1-7])/);
+    const rowHint = locM
+      ? `${isPool ? 'Swimming Pool' : isParty ? 'Party Hall' : 'Car Wash'} — ${locM[1].replace(/\b\w/g, c => c.toUpperCase())} row`
+      : isPool ? 'Swimming Pool section' : isParty ? 'Party Hall section' : 'Car Wash section';
+    return { sectionY: 52, sectionH: 12, sectionName: 'Amenities (Car Wash / Pool)', rowHint, problem: cleanProblem(raw), color };
+  }
+
+  // ── Water levels (section 5) ──────────────────────────────────────
+  if (lower.match(/water_level|tank level|jdo|jdr|mdo|mdr|collection tank|fire tank/)) {
+    const slotM = lower.match(/(6am|12pm|6pm|12am|06:00|12:00|18:00|00:00)/);
+    const slotNames: Record<string, string> = {
+      '6am': '6 AM', '06:00': '6 AM', '12pm': '12 PM', '12:00': '12 PM',
+      '6pm': '6 PM', '18:00': '6 PM', '12am': '12 AM', '00:00': '12 AM',
+    };
+    const rowHint = slotM ? `${slotNames[slotM[1]] ?? slotM[1]} reading row` : 'Water tank levels table';
+    return { sectionY: 64, sectionH: 14, sectionName: 'Water Tank Level Readings', rowHint, problem: cleanProblem(raw), color };
+  }
+
+  // ── Summary / Total Inflow (section 7) ───────────────────────────
+  if (lower.match(/summary|input_total|tower_usage|v_side|n_side|jtr_tanker|mtr_tanker|inflow|balance/)) {
+    const fieldNames: Record<string, string> = {
+      v_side: '"Venus Side Well" total cell',
+      n_side: '"Neptune Side Well" total cell',
+      jtr_tanker: '"JTR Tanker" total cell',
+      mtr_tanker: '"MTR Tanker" total cell',
+      input_total: '"Total Input" cell',
+      tower_usage: '"Tower Usage" cell',
+      diff: '"Difference" cell',
+    };
+    let rowHint = 'Total Inflow summary row (bottom of sheet)';
+    for (const [k, v] of Object.entries(fieldNames)) {
+      if (lower.includes(k)) { rowHint = v; break; }
+    }
+    return { sectionY: 88, sectionH: 12, sectionName: 'Total Inflow Summary (bottom row)', rowHint, problem: cleanProblem(raw), color };
+  }
+
+  // Fallback
+  return { sectionY: 0, sectionH: 100, sectionName: 'Unknown section', rowHint: 'See raw note below', problem: cleanProblem(raw), color };
 }
 
-// ── Annotated sheet canvas ──────────────────────────────────────────────────
-const BADGE_COLORS = ['#EF4444','#F97316','#EAB308','#22C55E','#3B82F6','#A855F7','#EC4899','#14B8A6'];
+function cleanProblem(raw: string): string {
+  // Extract the part after the last colon
+  const parts = raw.split(':');
+  const detail = parts.slice(1).join(':').trim();
+  if (!detail) return 'Please verify this value against the original sheet.';
 
-function AnnotatedSheet({ imageUrl, flags }: { imageUrl: string; flags: { region: Region | null; label: string }[] }) {
+  return detail
+    .replace(/out_of_range[^)]*\)/gi, 'Number looks unusual — please double-check')
+    .replace(/out_of_range/gi, 'Number looks unusual — please double-check')
+    .replace(/blank\/unreadable/gi, 'Value is blank or could not be read from the photo')
+    .replace(/only yesterday reading visible/gi, "Only yesterday's reading is visible; today's cell appears empty")
+    .replace(/not present on sheet/gi, 'This row does not appear on this version of the sheet')
+    .replace(/reading uncertain/gi, 'Handwriting is unclear — please check the original')
+    .replace(/consumption noted as (\S+)\s*reading uncertain/gi, 'Consumption of $1 is hard to read — please verify')
+    .replace(/\(value:?\s*[\d,]+\)/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+// ── Annotated canvas — draws section highlight bands ───────────────────────
+function AnnotatedCanvas({ imageUrl, flags }: { imageUrl: string; flags: FlagInfo[] }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [loaded, setLoaded] = useState(false);
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !loaded) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
     const img = new window.Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => {
-      canvas.width = img.naturalWidth;
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      canvas.width  = img.naturalWidth;
       canvas.height = img.naturalHeight;
       ctx.drawImage(img, 0, 0);
 
       const W = canvas.width;
       const H = canvas.height;
+      const badgeR = Math.max(20, W * 0.028);
+      const fontSize = Math.max(16, W * 0.022);
 
-      flags.forEach(({ region }, i) => {
-        if (!region) return;
-        const color = BADGE_COLORS[i % BADGE_COLORS.length];
-        const x = (region.x / 100) * W;
-        const y = (region.y / 100) * H;
-        const w = (region.w / 100) * W;
-        const h = (region.h / 100) * H;
+      flags.forEach(({ sectionY, sectionH, color }, i) => {
+        const y  = (sectionY  / 100) * H;
+        const h  = (sectionH  / 100) * H;
 
-        // Highlight rectangle
+        // Dim everything outside this band with a subtle dark overlay
+        // (don't do this per-flag — would compound; only draw the band itself)
+
+        // Filled band
         ctx.save();
+        ctx.fillStyle = color + '28';
+        ctx.fillRect(0, y, W, h);
+
+        // Left accent bar (thick stripe)
+        ctx.fillStyle = color;
+        ctx.fillRect(0, y, W * 0.012, h);
+
+        // Top + bottom border lines
         ctx.strokeStyle = color;
-        ctx.lineWidth = Math.max(3, W * 0.005);
-        ctx.fillStyle = color + '30'; // 19% opacity fill
+        ctx.lineWidth = Math.max(2, H * 0.003);
+        ctx.setLineDash([]);
         ctx.beginPath();
-        ctx.roundRect(x, y, w, h, 6);
-        ctx.fill();
+        ctx.moveTo(0, y);
+        ctx.lineTo(W, y);
+        ctx.moveTo(0, y + h);
+        ctx.lineTo(W, y + h);
         ctx.stroke();
-        ctx.restore();
 
-        // Badge circle (top-left of box)
-        const radius = Math.max(16, W * 0.022);
-        const bx = x + radius * 0.6;
-        const by = y - radius * 0.4;
-        ctx.save();
+        // Badge circle on the left accent bar, vertically centred in band
+        const bx = W * 0.012 + badgeR * 0.7;
+        const by = y + h / 2;
+
         ctx.fillStyle = color;
         ctx.beginPath();
-        ctx.arc(bx, by, radius, 0, Math.PI * 2);
+        ctx.arc(bx, by, badgeR, 0, Math.PI * 2);
         ctx.fill();
+
+        // White border on badge
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = Math.max(2, W * 0.003);
+        ctx.beginPath();
+        ctx.arc(bx, by, badgeR, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Number inside badge
         ctx.fillStyle = '#fff';
-        ctx.font = `bold ${Math.round(radius * 1.1)}px system-ui`;
+        ctx.font = `bold ${fontSize}px system-ui, sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(String(i + 1), bx, by);
+
         ctx.restore();
       });
+
+      setReady(true);
     };
     img.src = imageUrl;
-  }, [imageUrl, flags, loaded]);
+  }, [imageUrl, flags]);
 
   return (
     <div className="relative rounded-lg overflow-hidden bg-slate-800 border border-slate-700">
-      {/* Hidden img to trigger load detection */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={imageUrl}
-        alt=""
-        className="hidden"
-        crossOrigin="anonymous"
-        onLoad={() => setLoaded(true)}
-      />
-      <canvas
-        ref={canvasRef}
-        className="w-full object-contain"
-        style={{ display: loaded ? 'block' : 'none' }}
-      />
-      {!loaded && (
-        <div className="h-48 flex items-center justify-center text-slate-500 text-sm">
-          Loading sheet…
+      <canvas ref={canvasRef} className="w-full" style={{ display: ready ? 'block' : 'none' }} />
+      {!ready && (
+        <div className="h-48 flex items-center justify-center text-slate-500 text-sm animate-pulse">
+          Loading sheet image…
         </div>
       )}
-      <div className="absolute bottom-0 inset-x-0 bg-yellow-900/85 backdrop-blur-sm px-3 py-1.5">
-        <p className="text-yellow-300 text-xs text-center font-medium">
-          {flags.length} area{flags.length > 1 ? 's' : ''} marked for your review — see details below
-        </p>
-      </div>
     </div>
   );
 }
@@ -393,31 +338,56 @@ function AnnotatedSheet({ imageUrl, flags }: { imageUrl: string; flags: { region
 function FlaggedPanel({ flaggedFields, imageUrl }: { flaggedFields: string[]; imageUrl: string | null }) {
   if (!flaggedFields.length) return null;
 
-  const parsed = flaggedFields.map(f => parseFlag(f));
+  const flags = flaggedFields.map((f, i) => parseFlag(f, i));
 
   return (
-    <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-xl p-4 space-y-4">
-      <p className="text-yellow-400 font-semibold text-sm">
-        ⚠️ {flaggedFields.length} area{flaggedFields.length > 1 ? 's' : ''} need your attention — please check the original sheet
-      </p>
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-xl p-4">
+        <p className="text-yellow-400 font-semibold text-sm mb-1">
+          ⚠️ {flags.length} area{flags.length > 1 ? 's' : ''} could not be read clearly
+        </p>
+        <p className="text-slate-400 text-xs">
+          The coloured bands on the sheet below show exactly which sections need checking. Find the matching number below for details.
+        </p>
+      </div>
 
-      {imageUrl && <AnnotatedSheet imageUrl={imageUrl} flags={parsed} />}
+      {/* Annotated image */}
+      {imageUrl && <AnnotatedCanvas imageUrl={imageUrl} flags={flags} />}
 
-      <ul className="space-y-2">
-        {parsed.map(({ label }, i) => (
-          <li key={i} className="flex items-start gap-3">
-            <span
-              className="mt-0.5 w-6 h-6 rounded-full text-white text-xs font-bold flex items-center justify-center flex-shrink-0 shadow"
-              style={{ backgroundColor: BADGE_COLORS[i % BADGE_COLORS.length] }}
-            >
-              {i + 1}
-            </span>
-            <span className="text-slate-200 text-sm leading-snug flex-1 pt-0.5">
-              {label}
-            </span>
-          </li>
+      {/* Per-flag cards */}
+      <div className="space-y-3">
+        {flags.map(({ sectionName, rowHint, problem, color }, i) => (
+          <div
+            key={i}
+            className="rounded-xl overflow-hidden border"
+            style={{ borderColor: color + '60' }}
+          >
+            {/* Coloured header bar */}
+            <div className="flex items-center gap-3 px-4 py-2.5" style={{ backgroundColor: color + '22' }}>
+              <span
+                className="w-7 h-7 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0"
+                style={{ backgroundColor: color }}
+              >
+                {i + 1}
+              </span>
+              <span className="text-white font-semibold text-sm">{sectionName}</span>
+            </div>
+
+            {/* Detail */}
+            <div className="bg-slate-900 px-4 py-3 space-y-2">
+              <div className="flex items-start gap-2">
+                <span className="text-slate-500 text-xs mt-0.5 flex-shrink-0">📍 Row</span>
+                <span className="text-slate-200 text-sm font-medium">{rowHint}</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-slate-500 text-xs mt-0.5 flex-shrink-0">⚠️ Issue</span>
+                <span className="text-slate-300 text-sm leading-snug">{problem}</span>
+              </div>
+            </div>
+          </div>
         ))}
-      </ul>
+      </div>
     </div>
   );
 }
@@ -496,8 +466,7 @@ export default function UploadPage() {
 
   const confidenceColor = saveResult?.confidence != null
     ? saveResult.confidence >= 0.9 ? 'text-emerald-400'
-      : saveResult.confidence >= 0.75 ? 'text-yellow-400'
-      : 'text-red-400'
+      : saveResult.confidence >= 0.75 ? 'text-yellow-400' : 'text-red-400'
     : '';
 
   return (
@@ -518,12 +487,10 @@ export default function UploadPage() {
 
       <div className="flex-1 max-w-lg mx-auto w-full px-4 py-6">
 
-        {/* ── Progress ── */}
         {(status === 'compressing' || status === 'extracting' || status === 'saving') && (
           <ProgressDisplay status={status} preview={preview} />
         )}
 
-        {/* ── Success ── */}
         {status === 'success' && saveResult && (
           <div className="space-y-5">
             <div className="bg-emerald-900/30 border border-emerald-700 rounded-xl p-5 text-center">
@@ -553,7 +520,6 @@ export default function UploadPage() {
           </div>
         )}
 
-        {/* ── Date unclear ── */}
         {status === 'error_date' && (
           <div className="space-y-5">
             <div className="bg-red-900/30 border border-red-700 rounded-xl p-5 text-center">
@@ -565,7 +531,6 @@ export default function UploadPage() {
           </div>
         )}
 
-        {/* ── Other error ── */}
         {status === 'error_other' && (
           <div className="space-y-5">
             <div className="bg-red-900/30 border border-red-700 rounded-xl p-4">
@@ -575,7 +540,6 @@ export default function UploadPage() {
           </div>
         )}
 
-        {/* ── Confirming date ── */}
         {status === 'confirming' && confirmPayload && (
           <div className="space-y-4">
             {preview && (
@@ -596,7 +560,6 @@ export default function UploadPage() {
           </div>
         )}
 
-        {/* ── Idle / upload form ── */}
         {status === 'idle' && (
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
