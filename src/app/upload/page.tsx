@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, ChangeEvent, FormEvent } from 'react';
+import { useState, useRef, useEffect, ChangeEvent, FormEvent } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import imageCompression from 'browser-image-compression';
@@ -32,6 +32,202 @@ interface SaveResult {
   error?: string;
 }
 
+// ── Progress bar steps ──────────────────────────────────────────────────────
+const STEPS = [
+  { id: 'compressing', label: 'Compressing image' },
+  { id: 'extracting',  label: 'AI reading sheet' },
+  { id: 'saving',      label: 'Saving data' },
+] as const;
+
+type StepId = typeof STEPS[number]['id'];
+
+function getStepIndex(status: Status): number {
+  if (status === 'compressing') return 0;
+  if (status === 'extracting')  return 1;
+  if (status === 'saving')      return 2;
+  return -1;
+}
+
+// Simulated sub-progress for the slow AI step (0–100 within extracting)
+function useExtractingProgress(active: boolean) {
+  const [pct, setPct] = useState(0);
+  useEffect(() => {
+    if (!active) { setPct(0); return; }
+    // Fast ramp to 15%, then slow crawl to 82%, hold there until done
+    setPct(5);
+    const intervals: ReturnType<typeof setInterval>[] = [];
+    const t1 = setTimeout(() => setPct(15), 400);
+    // ~1% per 600ms from 15→82 over ~40s
+    let cur = 15;
+    const t2 = setInterval(() => {
+      cur = Math.min(82, cur + 1);
+      setPct(cur);
+      if (cur >= 82) clearInterval(t2);
+    }, 600);
+    intervals.push(t2);
+    return () => { clearTimeout(t1); intervals.forEach(clearInterval); };
+  }, [active]);
+  return pct;
+}
+
+function ProgressDisplay({
+  status,
+  preview,
+}: {
+  status: Status;
+  preview: string | null;
+}) {
+  const stepIdx = getStepIndex(status);
+  const extractingProgress = useExtractingProgress(status === 'extracting');
+
+  // Overall bar: each step = 33.3%
+  // Within extracting, animate sub-progress
+  let overallPct = 0;
+  if (stepIdx === 0) overallPct = 8; // compressing started
+  if (stepIdx === 1) overallPct = 33 + (extractingProgress / 100) * 34; // 33→67
+  if (stepIdx === 2) overallPct = 90; // saving
+
+  return (
+    <div className="space-y-6">
+      {/* Sheet thumbnail while processing */}
+      {preview && (
+        <div className="rounded-xl overflow-hidden bg-slate-800 border border-slate-700 relative">
+          <Image
+            src={preview}
+            alt="Sheet being processed"
+            width={400}
+            height={240}
+            className="w-full object-contain max-h-52 opacity-60"
+            unoptimized
+          />
+          {status === 'extracting' && (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="bg-slate-900/80 backdrop-blur-sm rounded-xl px-4 py-3 flex items-center gap-3">
+                <span className="w-5 h-5 border-2 border-slate-600 border-t-blue-400 rounded-full animate-spin flex-shrink-0" />
+                <span className="text-blue-300 text-sm font-medium">Claude is reading…</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Step labels */}
+      <div className="flex justify-between text-xs mb-1 px-0.5">
+        {STEPS.map((s, i) => (
+          <span
+            key={s.id}
+            className={
+              i < stepIdx
+                ? 'text-emerald-400 font-medium'
+                : i === stepIdx
+                ? 'text-blue-300 font-semibold'
+                : 'text-slate-600'
+            }
+          >
+            {i < stepIdx ? '✓ ' : ''}{s.label}
+          </span>
+        ))}
+      </div>
+
+      {/* Progress bar */}
+      <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+        <div
+          className="h-full bg-gradient-to-r from-blue-600 to-blue-400 rounded-full transition-all duration-700 ease-out"
+          style={{ width: `${overallPct}%` }}
+        />
+      </div>
+
+      {/* Current step detail */}
+      <p className="text-center text-slate-400 text-sm">
+        {status === 'compressing' && 'Preparing your photo…'}
+        {status === 'extracting' && 'Reading handwritten values from the sheet. This takes 15–30 seconds.'}
+        {status === 'saving' && 'Writing to database…'}
+      </p>
+
+      {/* Step dots */}
+      <div className="flex justify-center gap-2">
+        {STEPS.map((s, i) => (
+          <div
+            key={s.id}
+            className={`w-2 h-2 rounded-full transition-all duration-300 ${
+              i < stepIdx
+                ? 'bg-emerald-400'
+                : i === stepIdx
+                ? 'bg-blue-400 scale-125'
+                : 'bg-slate-700'
+            }`}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Flagged fields panel with annotated image ───────────────────────────────
+function FlaggedPanel({
+  flaggedFields,
+  imageUrl,
+}: {
+  flaggedFields: string[];
+  imageUrl: string | null;
+}) {
+  if (!flaggedFields.length) return null;
+
+  return (
+    <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-xl p-4 space-y-4">
+      <p className="text-yellow-400 font-medium text-sm">
+        Low-confidence fields — please verify:
+      </p>
+
+      {/* Annotated image */}
+      {imageUrl && (
+        <div className="relative rounded-lg overflow-hidden bg-slate-800 border border-slate-700">
+          <Image
+            src={imageUrl}
+            alt="Uploaded sheet"
+            width={400}
+            height={300}
+            className="w-full object-contain max-h-64"
+            unoptimized
+          />
+          {/* Number badges overlaid along the right edge */}
+          <div className="absolute top-2 right-2 flex flex-col gap-1.5">
+            {flaggedFields.map((_, i) => (
+              <span
+                key={i}
+                className="w-5 h-5 rounded-full bg-yellow-400 text-slate-900 text-xs font-bold flex items-center justify-center shadow-lg"
+              >
+                {i + 1}
+              </span>
+            ))}
+          </div>
+          {/* "Review required" banner */}
+          <div className="absolute bottom-0 inset-x-0 bg-yellow-900/80 backdrop-blur-sm px-3 py-1.5">
+            <p className="text-yellow-300 text-xs text-center font-medium">
+              {flaggedFields.length} field{flaggedFields.length > 1 ? 's' : ''} need manual verification
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Numbered legend */}
+      <ul className="space-y-1.5">
+        {flaggedFields.map((f, i) => (
+          <li key={f} className="flex items-start gap-2">
+            <span className="mt-0.5 w-5 h-5 rounded-full bg-yellow-400/20 border border-yellow-500/50 text-yellow-400 text-xs font-bold flex items-center justify-center flex-shrink-0">
+              {i + 1}
+            </span>
+            <span className="text-yellow-300/80 text-xs font-mono bg-slate-800 rounded px-2 py-1 flex-1">
+              {f}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// ── Main component ──────────────────────────────────────────────────────────
 export default function UploadPage() {
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
@@ -95,7 +291,6 @@ export default function UploadPage() {
         return;
       }
 
-      // Extraction succeeded — show date for confirmation
       setConfirmPayload({
         image_url: json.image_url,
         extracted_date: json.extracted_date,
@@ -164,6 +359,11 @@ export default function UploadPage() {
 
       <div className="flex-1 max-w-lg mx-auto w-full px-4 py-6">
 
+        {/* ── Progress (compressing / extracting / saving) ── */}
+        {(status === 'compressing' || status === 'extracting' || status === 'saving') && (
+          <ProgressDisplay status={status} preview={preview} />
+        )}
+
         {/* ── Success ── */}
         {status === 'success' && saveResult && (
           <div className="space-y-5">
@@ -182,20 +382,10 @@ export default function UploadPage() {
               )}
             </div>
 
-            {saveResult.flagged_fields && saveResult.flagged_fields.length > 0 && (
-              <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-xl p-4">
-                <p className="text-yellow-400 font-medium text-sm mb-2">
-                  Low-confidence fields — please verify:
-                </p>
-                <ul className="space-y-1">
-                  {saveResult.flagged_fields.map((f) => (
-                    <li key={f} className="text-yellow-300/80 text-xs font-mono bg-slate-800 rounded px-2 py-1">
-                      {f}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            <FlaggedPanel
+              flaggedFields={saveResult.flagged_fields ?? []}
+              imageUrl={confirmPayload?.image_url ?? null}
+            />
 
             <div className="flex gap-3">
               <button
@@ -294,18 +484,6 @@ export default function UploadPage() {
                 Confirm & Save
               </button>
             </div>
-          </div>
-        )}
-
-        {/* ── Loading states ── */}
-        {(status === 'compressing' || status === 'extracting' || status === 'saving') && (
-          <div className="flex flex-col items-center justify-center py-16 space-y-4">
-            <span className="w-10 h-10 border-4 border-slate-700 border-t-blue-500 rounded-full animate-spin" />
-            <p className="text-slate-300 text-sm font-medium">
-              {status === 'compressing' && 'Compressing image…'}
-              {status === 'extracting' && 'Reading sheet with AI…'}
-              {status === 'saving' && 'Saving data…'}
-            </p>
           </div>
         )}
 
