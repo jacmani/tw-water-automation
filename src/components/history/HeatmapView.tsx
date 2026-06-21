@@ -23,63 +23,46 @@ interface Props {
 
 export default function HeatmapView({ sheets, towerFilter, startDate, endDate }: Props) {
   const [mode, setMode] = useState<'community' | 'per-tower'>('community');
-
   const activeTowers = towerFilter === 'All' ? TOWERS : [towerFilter];
 
   return (
     <div>
-      {/* Mode toggle */}
       <div className="flex gap-2 mb-5">
         {(['community', 'per-tower'] as const).map(m => (
-          <button
-            key={m}
-            onClick={() => setMode(m)}
+          <button key={m} onClick={() => setMode(m)}
             className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
               mode === m
-                ? 'bg-slate-700 text-white'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
-          >
+                ? 'bg-slate-200 dark:bg-slate-700 text-slate-900 dark:text-white'
+                : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}>
             {m === 'community' ? 'Community' : 'Per Tower'}
           </button>
         ))}
       </div>
 
       {mode === 'community' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-          <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-4">
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5">
+          <p className="text-slate-500 dark:text-slate-400 text-xs font-semibold uppercase tracking-wider mb-4">
             Community Daily Usage — deviation from period mean
           </p>
-          <CalendarHeatmap
-            sheets={sheets}
-            getValue={s => s.summary?.tower_usage ?? null}
-            label=""
-            startDate={startDate}
-            endDate={endDate}
-          />
+          <CalendarHeatmap sheets={sheets} getValue={s => s.summary?.tower_usage ?? null}
+            label="" startDate={startDate} endDate={endDate} />
         </div>
       )}
 
       {mode === 'per-tower' && (
         <div className={`grid gap-5 ${activeTowers.length > 1 ? 'md:grid-cols-2' : 'grid-cols-1'}`}>
           {activeTowers.map(tower => (
-            <div key={tower} className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-              <CalendarHeatmap
-                sheets={sheets}
-                getValue={s => getTowerTotal(s, tower)}
-                label={tower}
-                startDate={startDate}
-                endDate={endDate}
-                color={TOWER_COLORS[tower]}
-              />
+            <div key={tower} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5">
+              <CalendarHeatmap sheets={sheets} getValue={s => getTowerTotal(s, tower)}
+                label={tower} startDate={startDate} endDate={endDate} color={TOWER_COLORS[tower]} />
             </div>
           ))}
         </div>
       )}
 
-      <p className="text-slate-600 text-xs mt-3">
-        Hover / tap a cell for exact date, value, and flag.
-        Amber border = flagged day.
+      <p className="text-slate-400 dark:text-slate-600 text-xs mt-3">
+        Hover / tap a cell for exact date, value, and flag. Amber border = flagged day.
       </p>
     </div>
   );
