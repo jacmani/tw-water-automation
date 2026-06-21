@@ -2,29 +2,48 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Design tokens ─────────────────────────────────────────────────────────
+   Light mode is the default (:root). Dark mode activates on .dark class.
+   Use these via Tailwind's bg-[var(--...)] or just use dark: variants.
+────────────────────────────────────────────────────────────────────────── */
 :root {
-  --background: #020617;
-  --foreground: #f8fafc;
+  --bg-page:        #F1F5F9;
+  --bg-card:        #FFFFFF;
+  --bg-card-alt:    #F8FAFC;
+  --border:         #E2E8F0;
+  --border-strong:  #CBD5E1;
+  --text-primary:   #0F172A;
+  --text-secondary: #475569;
+  --text-muted:     #94A3B8;
+  --scrollbar-track: #E2E8F0;
+  --scrollbar-thumb: #94A3B8;
+}
+
+.dark {
+  --bg-page:        #020617;
+  --bg-card:        #0F172A;
+  --bg-card-alt:    #1E293B;
+  --border:         #1E293B;
+  --border-strong:  #334155;
+  --text-primary:   #F8FAFC;
+  --text-secondary: #94A3B8;
+  --text-muted:     #475569;
+  --scrollbar-track: #1e293b;
+  --scrollbar-thumb: #475569;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: var(--bg-page);
+  color: var(--text-primary);
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
+  transition: background 0.2s ease, color 0.2s ease;
 }
 
 /* Scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-}
-::-webkit-scrollbar-track {
-  background: #1e293b;
-}
-::-webkit-scrollbar-thumb {
-  background: #475569;
-  border-radius: 3px;
-}
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
 
 /* Infographic containers must be visible for html-to-image capture */
 .infographic-offscreen {
