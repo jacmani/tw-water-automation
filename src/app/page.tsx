@@ -10,6 +10,7 @@ import ISTClock from '@/components/dashboard/ISTClock';
 import InflowSummaryPanel from '@/components/dashboard/InflowSummaryPanel';
 import WaterLevelsPanel from '@/components/dashboard/WaterLevelsPanel';
 import AmenitiesPanel from '@/components/dashboard/AmenitiesPanel';
+import ThemeToggle from '@/components/ThemeToggle';
 import type { DashboardData, TrendChartPoint } from '@/types';
 
 export const revalidate = 60;
@@ -100,35 +101,36 @@ export default async function Dashboard() {
   });
 
   return (
-    <main className="min-h-screen bg-slate-950 text-white">
-      <header className="bg-slate-900 border-b border-slate-800 px-4 py-4 sticky top-0 z-10">
+    <main className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white">
+      <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-4 sticky top-0 z-10">
         <div className="max-w-4xl mx-auto flex items-center justify-between gap-4">
           <div>
-            <h1 className="text-lg font-bold text-white leading-tight">Trinity World Water Consumption</h1>
+            <h1 className="text-lg font-bold text-slate-900 dark:text-white leading-tight">Trinity World Water Consumption</h1>
           </div>
           <ISTClock />
           <div className="flex items-center gap-2">
+            <ThemeToggle />
             <Link
               href="/logbook"
-              className="text-slate-400 hover:text-white text-sm font-medium px-3 py-2 rounded-lg transition-colors"
+              className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white text-sm font-medium px-3 py-2 rounded-lg transition-colors"
             >
               Log Book
             </Link>
             <Link
               href="/history"
-              className="text-slate-400 hover:text-white text-sm font-medium px-3 py-2 rounded-lg transition-colors"
+              className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white text-sm font-medium px-3 py-2 rounded-lg transition-colors"
             >
               History
             </Link>
             <Link
               href="/alerts"
-              className="text-slate-400 hover:text-white text-sm font-medium px-3 py-2 rounded-lg transition-colors"
+              className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white text-sm font-medium px-3 py-2 rounded-lg transition-colors"
             >
               Alerts
             </Link>
             <Link
               href="/committee"
-              className="text-slate-400 hover:text-white text-sm font-medium px-3 py-2 rounded-lg transition-colors"
+              className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white text-sm font-medium px-3 py-2 rounded-lg transition-colors"
             >
               Committee
             </Link>
@@ -155,7 +157,7 @@ export default async function Dashboard() {
         )}
 
         <section>
-          <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-3">
+          <p className="text-slate-500 dark:text-slate-400 text-xs font-semibold uppercase tracking-wider mb-3">
             Tower Consumption — {formatMediumDate(sheetDate)}
           </p>
           <div className="grid grid-cols-2 gap-3">
@@ -165,11 +167,10 @@ export default async function Dashboard() {
           </div>
         </section>
 
-        {/* Logbook panels — from manual log entry */}
         {recentLogDate && (
           <>
             <section>
-              <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-3">
+              <p className="text-slate-500 dark:text-slate-400 text-xs font-semibold uppercase tracking-wider mb-3">
                 Inflow / Usage — {formatMediumDate(recentLogDate)}
               </p>
               <InflowSummaryPanel data={logbookPanelData.inflow} date={null} />
@@ -184,7 +185,7 @@ export default async function Dashboard() {
 
         {chartData.length > 0 && (
           <section>
-            <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-3">
+            <p className="text-slate-500 dark:text-slate-400 text-xs font-semibold uppercase tracking-wider mb-3">
               7-Day Trend
             </p>
             <TrendChart data={chartData} />
@@ -193,7 +194,7 @@ export default async function Dashboard() {
 
         {dashboardData.has_sheet && (
           <section>
-            <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-3">
+            <p className="text-slate-500 dark:text-slate-400 text-xs font-semibold uppercase tracking-wider mb-3">
               Download Infographics
             </p>
             <InfographicPanel data={dashboardData} />
