@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
 import { extractSheetData } from '@/lib/anthropic';
+import { extractTextFromImage } from '@/lib/googleVision';
+import { validateExtraction } from '@/lib/extractionValidator';
 
 const DATE_CONFIDENCE_THRESHOLD = 0.8;
 
@@ -51,11 +53,27 @@ export async function POST(request: NextRequest) {
     .from('sheet-images')
     .getPublicUrl(fileName);
 
-  // Run Claude Vision extraction
+  // Run Claude extraction + Google Vision OCR in parallel
   let extracted;
+  let visionValidated = false;
   try {
     const base64 = buffer.toString('base64');
-    extracted = await extractSheetData(base64, mediaType);
+    const [claudeResult, visionResult] = await Promise.all([
+      extractSheetData(base64, mediaType),
+      extractTextFromImage(base64),
+    ]);
+    extracted = claudeResult;
+
+    const validation = validateExtraction(extracted, visionResult);
+    extracted.overall_confidence = Math.min(1, extracted.overall_confidence + validation.confidenceBoost);
+    extracted.flagged_fields = [...extracted.flagged_fields, ...validation.flags];
+    if (validation.dateMismatch) {
+      extracted.date_confidence = 0.5;
+    }
+    if (validation.visionDate !== null && extracted.date_confidence < DATE_CONFIDENCE_THRESHOLD) {
+      extracted.date = validation.visionDate;
+    }
+    visionValidated = visionResult.words.length > 0;
   } catch (err) {
     console.error('Extraction error:', err);
     await supabase.storage.from('sheet-images').remove([fileName]);
@@ -72,6 +90,7 @@ export async function POST(request: NextRequest) {
       date_confidence: extracted.date_confidence ?? 0,
       date_unclear: true,                        // tells UI to show date picker
       extraction: extracted,
+      visionValidated,
     });
   }
 
@@ -83,5 +102,6 @@ export async function POST(request: NextRequest) {
     date_confidence: extracted.date_confidence,
     date_unclear: false,
     extraction: extracted,
+    visionValidated,
   });
 }

@@ -3,6 +3,10 @@ import type { ExtractionResult } from '@/types';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+const PRIMARY_MODEL = process.env.EXTRACTION_MODEL ?? 'claude-haiku-4-5-20251001';
+const FALLBACK_MODEL = 'claude-opus-4-7';
+const CONFIDENCE_THRESHOLD = 0.70;
+
 const EXTRACTION_PROMPT = `You are analyzing a handwritten daily water meter reading sheet for Trinity World residential apartment complex in India.
 
 Extract ALL data from this sheet and return it as a valid JSON object. Read carefully — the handwriting varies by technician.
@@ -175,13 +179,15 @@ Return ONLY a valid JSON object — no markdown, no explanation. Use null for bl
   "flagged_fields": []
 }`;
 
-export async function extractSheetData(
+async function runExtraction(
   base64Image: string,
-  mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif'
+  mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
+  model: string
 ): Promise<ExtractionResult> {
-  const response = await anthropic.messages.create({
-    model: 'claude-opus-4-7',
+  const response = await anthropic.beta.promptCaching.messages.create({
+    model,
     max_tokens: 4096,
+    system: [{ type: 'text', text: EXTRACTION_PROMPT, cache_control: { type: 'ephemeral' } }],
     messages: [
       {
         role: 'user',
@@ -190,7 +196,6 @@ export async function extractSheetData(
             type: 'image',
             source: { type: 'base64', media_type: mediaType, data: base64Image },
           },
-          { type: 'text', text: EXTRACTION_PROMPT },
         ],
       },
     ],
@@ -206,8 +211,23 @@ export async function extractSheetData(
     : (text.match(/```(?:json)?\n?([\s\S]*?)\n?```/)?.[1] ?? text);
 
   const parsed: ExtractionResult = JSON.parse(jsonStr);
-
   if (!parsed.flagged_fields) parsed.flagged_fields = [];
-
   return parsed;
+}
+
+export async function extractSheetData(
+  base64Image: string,
+  mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif'
+): Promise<ExtractionResult> {
+  const result = await runExtraction(base64Image, mediaType, PRIMARY_MODEL);
+  console.log(`[extraction] model=${PRIMARY_MODEL} confidence=${result.overall_confidence}`);
+
+  if (result.overall_confidence < CONFIDENCE_THRESHOLD) {
+    console.log(`[extraction] low confidence, retrying with ${FALLBACK_MODEL}`);
+    const fallback = await runExtraction(base64Image, mediaType, FALLBACK_MODEL);
+    console.log(`[extraction] model=${FALLBACK_MODEL} confidence=${fallback.overall_confidence}`);
+    return fallback;
+  }
+
+  return result;
 }
