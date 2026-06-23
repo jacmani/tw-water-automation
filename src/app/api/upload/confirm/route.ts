@@ -10,14 +10,14 @@ const SPIKE_THRESHOLD = 15; // % above 7-day avg
 export async function POST(request: NextRequest) {
   const supabase = createServerClient();
 
-  let body: { image_url: string; date: string; extraction: ExtractionResult };
+  let body: { image_url: string; date: string; extraction: ExtractionResult; date_source?: string };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
   }
 
-  const { image_url, date, extraction } = body;
+  const { image_url, date, extraction, date_source } = body;
   if (!image_url || !date || !extraction) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
   }
@@ -25,10 +25,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid date format' }, { status: 400 });
   }
 
+  // 'ai' = AI read date confidently; 'manual' = user entered date because AI couldn't read it
+  const resolvedDateSource = date_source === 'manual' ? 'manual' : 'ai';
+
   // Create the daily_sheets record now that the user has confirmed
   const { data: sheet, error: sheetError } = await supabase
     .from('daily_sheets')
-    .insert({ date, image_url, processed_status: 'pending' })
+    .insert({ date, image_url, processed_status: 'pending', date_source: resolvedDateSource })
     .select()
     .single();
 
