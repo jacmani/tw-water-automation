@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
       : 'image/jpeg'
   ) as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
 
-  // Upload to storage first so we have the URL ready for the confirm step
+  // Upload to storage first so we have the URL for the confirm step
   const ext = image.name.split('.').pop()?.toLowerCase() ?? 'jpg';
   const fileName = `pending-${Date.now()}.${ext}`;
 
@@ -62,28 +62,26 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to read the sheet image' }, { status: 500 });
   }
 
-  // Gate on date confidence — reject before touching the DB
-  if (
-    !extracted.date ||
-    extracted.date_confidence < DATE_CONFIDENCE_THRESHOLD
-  ) {
-    await supabase.storage.from('sheet-images').remove([fileName]);
-    return NextResponse.json(
-      {
-        error: 'date_unclear',
-        message: 'Date on sheet is unclear. Please retake the photo in better lighting.',
-        date_confidence: extracted.date_confidence ?? 0,
-      },
-      { status: 422 }
-    );
+  // If date confidence is low, return the extraction anyway with a flag so the
+  // client can show a date picker instead of a dead-end error screen.
+  if (!extracted.date || extracted.date_confidence < DATE_CONFIDENCE_THRESHOLD) {
+    return NextResponse.json({
+      pending: true,
+      image_url: publicUrl,
+      extracted_date: extracted.date ?? null,   // best guess, may be null
+      date_confidence: extracted.date_confidence ?? 0,
+      date_unclear: true,                        // tells UI to show date picker
+      extraction: extracted,
+    });
   }
 
-  // Return extracted date for client-side confirmation. Nothing saved to DB yet.
+  // Date confident — return for client-side confirmation. Nothing saved to DB yet.
   return NextResponse.json({
     pending: true,
     image_url: publicUrl,
     extracted_date: extracted.date,
     date_confidence: extracted.date_confidence,
+    date_unclear: false,
     extraction: extracted,
   });
 }
