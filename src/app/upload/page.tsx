@@ -11,22 +11,24 @@ type Status =
   | 'idle'
   | 'compressing'
   | 'extracting'
-  | 'confirming'
+  | 'confirming'           // AI read date confidently — show date for user to confirm
+  | 'date_picker'          // AI couldn't read date — show manual date entry form
   | 'saving'
   | 'success'
-  | 'error_date'
   | 'error_other';
 
 interface ConfirmPayload {
   image_url: string;
-  extracted_date: string;
+  extracted_date: string | null;  // null when AI couldn't read it
   date_confidence: number;
+  date_unclear: boolean;
   extraction: ExtractionResult;
 }
 
 interface SaveResult {
   success: boolean;
   sheet_id?: string;
+  date?: string;
   confidence?: number;
   flagged_fields?: string[];
   error?: string;
@@ -392,6 +394,107 @@ function FlaggedPanel({ flaggedFields, imageUrl }: { flaggedFields: string[]; im
   );
 }
 
+// ── Date picker screen ───────────────────────────────────────────────────────
+// Shown when AI can't read the date from the sheet with high confidence.
+interface DatePickerScreenProps {
+  imageUrl: string | null;
+  aiGuess: string | null;          // ISO date e.g. "2026-06-24", or null
+  onConfirm: (date: string) => void;
+  onRetake: () => void;
+}
+
+function DatePickerScreen({ imageUrl, aiGuess, onConfirm, onRetake }: DatePickerScreenProps) {
+  // Default to today in IST (UTC+5:30) or the AI guess if available
+  const todayIST = () => {
+    const now = new Date();
+    // Offset to IST
+    const ist = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
+    return ist.toISOString().slice(0, 10);
+  };
+
+  const [selectedDate, setSelectedDate] = useState<string>(aiGuess ?? todayIST());
+  const [error, setError] = useState<string>('');
+
+  function handleConfirm() {
+    if (!selectedDate || !/^\d{4}-\d{2}-\d{2}$/.test(selectedDate)) {
+      setError('Please choose a valid date.');
+      return;
+    }
+    onConfirm(selectedDate);
+  }
+
+  return (
+    <div className="space-y-5">
+      {/* Warning banner */}
+      <div className="bg-amber-900/30 border border-amber-600/60 rounded-xl p-4">
+        <div className="flex gap-3 items-start">
+          <span className="text-amber-400 text-xl flex-shrink-0">📅</span>
+          <div>
+            <p className="text-amber-300 font-semibold text-sm">Couldn&apos;t read the date automatically</p>
+            <p className="text-slate-400 text-xs mt-1 leading-relaxed">
+              The AI couldn&apos;t read the date from this sheet with enough confidence. Please enter the correct date
+              — this is the only field you need to provide.{aiGuess ? ' The AI\'s best guess is pre-filled below.' : ''}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Sheet thumbnail */}
+      {imageUrl && (
+        <div className="rounded-xl overflow-hidden bg-slate-800 border border-slate-700">
+          <Image src={imageUrl} alt="Sheet preview" width={400} height={200}
+            className="w-full object-contain max-h-48" unoptimized />
+        </div>
+      )}
+
+      {/* Date input */}
+      <div className="bg-slate-900 border border-slate-700 rounded-xl p-5 space-y-3">
+        <div>
+          <label className="block text-slate-400 text-xs font-semibold uppercase tracking-wider mb-2">
+            Sheet Date
+          </label>
+          <input
+            type="date"
+            value={selectedDate}
+            max={todayIST()}
+            onChange={(e) => { setSelectedDate(e.target.value); setError(''); }}
+            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-3 text-white text-lg font-semibold focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+          />
+          {error && <p className="text-red-400 text-xs mt-1.5">{error}</p>}
+        </div>
+        {aiGuess && aiGuess !== selectedDate && (
+          <p className="text-slate-500 text-xs">
+            AI guessed: {formatDate(aiGuess)} — change if incorrect.
+          </p>
+        )}
+        <div className="bg-blue-950/50 border border-blue-800/50 rounded-lg px-3 py-2 flex gap-2 items-start">
+          <span className="text-blue-400 text-xs flex-shrink-0 mt-0.5">ℹ️</span>
+          <p className="text-blue-300 text-xs leading-relaxed">
+            This entry will be flagged as <strong>manually dated</strong> in the history view so the committee is aware.
+          </p>
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="flex gap-3">
+        <button
+          onClick={onRetake}
+          className="flex-1 bg-slate-800 hover:bg-slate-700 text-white py-3 rounded-xl font-medium transition-colors"
+        >
+          Retake Photo
+        </button>
+        <button
+          onClick={handleConfirm}
+          disabled={!selectedDate}
+          className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:cursor-not-allowed text-white py-3 rounded-xl font-semibold transition-colors"
+        >
+          Save with This Date
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Main ────────────────────────────────────────────────────────────────────
 export default function UploadPage() {
   const [file, setFile] = useState<File | null>(null);
@@ -436,24 +539,37 @@ export default function UploadPage() {
     try {
       const res = await fetch('/api/upload', { method: 'POST', body: formData });
       const json = await res.json();
-      if (res.status === 422 && json.error === 'date_unclear') { setStatus('error_date'); return; }
       if (!res.ok) { setStatus('error_other'); setSaveResult({ success: false, error: json.error ?? 'Something went wrong.' }); return; }
-      setConfirmPayload({ image_url: json.image_url, extracted_date: json.extracted_date, date_confidence: json.date_confidence, extraction: json.extraction });
-      setStatus('confirming');
+      setConfirmPayload({
+        image_url: json.image_url,
+        extracted_date: json.extracted_date ?? null,
+        date_confidence: json.date_confidence,
+        date_unclear: !!json.date_unclear,
+        extraction: json.extraction,
+      });
+      // Route to date picker if AI couldn't read the date confidently
+      setStatus(json.date_unclear ? 'date_picker' : 'confirming');
     } catch {
       setStatus('error_other');
       setSaveResult({ success: false, error: 'Network error. Please try again.' });
     }
   }
 
-  async function handleConfirm() {
+  async function handleConfirm(overrideDate?: string) {
     if (!confirmPayload) return;
     setStatus('saving');
+    const finalDate = overrideDate ?? confirmPayload.extracted_date;
+    const dateSource = overrideDate ? 'manual' : 'ai';
     try {
       const res = await fetch('/api/upload/confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image_url: confirmPayload.image_url, date: confirmPayload.extracted_date, extraction: confirmPayload.extraction }),
+        body: JSON.stringify({
+          image_url: confirmPayload.image_url,
+          date: finalDate,
+          extraction: confirmPayload.extraction,
+          date_source: dateSource,
+        }),
       });
       const json: SaveResult = await res.json();
       setSaveResult(json);
@@ -496,7 +612,7 @@ export default function UploadPage() {
             <div className="bg-emerald-900/30 border border-emerald-700 rounded-xl p-5 text-center">
               <div className="text-4xl mb-2">✓</div>
               <p className="text-emerald-400 font-semibold text-lg">Sheet Saved</p>
-              {confirmPayload && <p className="text-slate-300 text-sm mt-1">{formatDate(confirmPayload.extracted_date)}</p>}
+              {saveResult.date && <p className="text-slate-300 text-sm mt-1">{formatDate(saveResult.date)}</p>}
               {saveResult.confidence != null && (
                 <p className={`text-sm mt-2 font-medium ${confidenceColor}`}>
                   Extraction confidence: {Math.round(saveResult.confidence * 100)}%
@@ -520,15 +636,13 @@ export default function UploadPage() {
           </div>
         )}
 
-        {status === 'error_date' && (
-          <div className="space-y-5">
-            <div className="bg-red-900/30 border border-red-700 rounded-xl p-5 text-center">
-              <div className="text-4xl mb-3">📷</div>
-              <p className="text-red-400 font-semibold text-base">Date on sheet is unclear</p>
-              <p className="text-slate-300 text-sm mt-2 leading-relaxed">Please retake the photo in better lighting. Make sure the date at the top of the sheet is fully visible.</p>
-            </div>
-            <button onClick={resetToIdle} className="w-full bg-slate-800 hover:bg-slate-700 text-white py-3 rounded-xl font-medium transition-colors">Retake Photo</button>
-          </div>
+        {status === 'date_picker' && confirmPayload && (
+          <DatePickerScreen
+            imageUrl={preview}
+            aiGuess={confirmPayload.extracted_date}
+            onConfirm={(date) => handleConfirm(date)}
+            onRetake={resetToIdle}
+          />
         )}
 
         {status === 'error_other' && (
@@ -540,7 +654,7 @@ export default function UploadPage() {
           </div>
         )}
 
-        {status === 'confirming' && confirmPayload && (
+        {status === 'confirming' && confirmPayload && confirmPayload.extracted_date && (
           <div className="space-y-4">
             {preview && (
               <div className="rounded-xl overflow-hidden bg-slate-800 border border-slate-700">
@@ -550,12 +664,12 @@ export default function UploadPage() {
             <div className="bg-slate-900 border border-slate-700 rounded-xl p-5">
               <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-1">Date found on sheet</p>
               <p className="text-white text-xl font-bold mt-1">{formatDate(confirmPayload.extracted_date)}</p>
-              <p className="text-emerald-400 text-xs mt-1.5">Confidence: {Math.round(confirmPayload.date_confidence * 100)}%</p>
+              <p className="text-emerald-400 text-xs mt-1.5">AI confidence: {Math.round(confirmPayload.date_confidence * 100)}%</p>
             </div>
             <p className="text-slate-400 text-sm text-center">Does this date look correct?</p>
             <div className="flex gap-3">
               <button onClick={resetToIdle} className="flex-1 bg-slate-800 hover:bg-slate-700 text-white py-3 rounded-xl font-medium transition-colors">Retake Photo</button>
-              <button onClick={handleConfirm} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-xl font-semibold transition-colors">Confirm & Save</button>
+              <button onClick={() => handleConfirm()} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-xl font-semibold transition-colors">Confirm & Save</button>
             </div>
           </div>
         )}
