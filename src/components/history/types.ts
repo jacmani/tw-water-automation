@@ -43,6 +43,7 @@ export interface HSummary {
 export interface SheetRecord {
   id: string;
   date: string;
+  date_source: 'ai' | 'manual' | null;
   confidence_score: number | null;
   summary: HSummary | null;
   tower_consumption: HTowerRow[];
