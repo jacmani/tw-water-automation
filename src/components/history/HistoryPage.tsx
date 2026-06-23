@@ -35,7 +35,7 @@ interface RawSummary {
   v_side: number | null; n_side: number | null; jtr_tanker: number | null; mtr_tanker: number | null;
 }
 interface RawSheet {
-  id: string; date: string; confidence_score: number | null;
+  id: string; date: string; date_source: 'ai' | 'manual' | null; confidence_score: number | null;
   summary: RawSummary[] | RawSummary | null;
   tower_consumption: RawTowerRow[]; water_sources: RawSourceRow[];
 }
@@ -56,7 +56,7 @@ function normalise(raw: RawSheet): SheetRecord {
     location: r.location, source_type: r.source_type, r_yesterday: r.r_yesterday,
     r_today: r.r_today, yesterday_ltrs: r.yesterday_ltrs, today_ltrs: r.today_ltrs, total: r.total,
   }));
-  return { id: raw.id, date: raw.date, confidence_score: raw.confidence_score, summary, tower_consumption: tc, water_sources: ws, flag: computeFlag(summary, tc, ws) };
+  return { id: raw.id, date: raw.date, date_source: raw.date_source ?? null, confidence_score: raw.confidence_score, summary, tower_consumption: tc, water_sources: ws, flag: computeFlag(summary, tc, ws) };
 }
 
 export default function HistoryPage() {
@@ -74,7 +74,7 @@ export default function HistoryPage() {
     setLoading(true); setError(null);
     const { data, error: err } = await supabase
       .from('daily_sheets')
-      .select(`id, date, confidence_score,
+      .select(`id, date, date_source, confidence_score,
         summary ( input_total, tower_usage, diff, v_side, n_side, jtr_tanker, mtr_tanker ),
         tower_consumption ( tower, type, total_ltrs, r_yesterday, r_today, vol_yesterday, vol_today, diff, confidence ),
         water_sources ( location, source_type, r_yesterday, r_today, yesterday_ltrs, today_ltrs, total )`)
