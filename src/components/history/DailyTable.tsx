@@ -140,7 +140,15 @@ function TableRow({ sheet, towerFilter }: { sheet: SheetRecord; towerFilter: Tow
     <>
       <tr className="border-b border-slate-100 dark:border-slate-800/50 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors cursor-pointer"
         onClick={() => setOpen(o => !o)}>
-        <td className="px-4 py-3 text-slate-800 dark:text-slate-200 text-sm font-medium whitespace-nowrap">{formatMediumDate(sheet.date)}</td>
+        <td className="px-4 py-3 text-slate-800 dark:text-slate-200 text-sm font-medium whitespace-nowrap">
+          <span>{formatMediumDate(sheet.date)}</span>
+          {sheet.date_source === 'manual' && (
+            <span title="Date was entered manually — AI could not read it from the sheet"
+              className="ml-2 inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 border border-amber-300 dark:border-amber-700/60 cursor-help align-middle">
+              ✋ Manual
+            </span>
+          )}
+        </td>
         <td className="px-4 py-3 text-slate-600 dark:text-slate-300 text-sm text-right whitespace-nowrap">{kl(sum?.input_total)}</td>
         <td className="px-4 py-3 text-slate-600 dark:text-slate-300 text-sm text-right whitespace-nowrap">{kl(sum?.tower_usage)}</td>
         <td className={`px-4 py-3 text-sm text-right whitespace-nowrap ${diffColor}`}>
