@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import Navbar from '@/components/Navbar';
 import { getCurrentCommitteeTerm, getCommitteeMembers } from '@/lib/supabase';
 import { TOWER_COLORS, TOWER_TEXT_CLASSES } from '@/lib/utils';
 import type { CommitteeMember, TowerName, CommitteeRole } from '@/types';
@@ -52,23 +53,19 @@ export default async function CommitteePage() {
 
   return (
     <main className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white">
-      <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-4 sticky top-0 z-10">
-        <div className="max-w-4xl mx-auto flex items-center justify-between">
-          <div>
-            <Link href="/" className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors text-sm">
-              ← Dashboard
-            </Link>
-            <h1 className="text-lg font-bold text-slate-900 dark:text-white leading-tight mt-0.5">Management Committee</h1>
-            {term && <p className="text-slate-500 dark:text-slate-400 text-xs">Term {term}</p>}
-          </div>
-          <Link href="/committee/admin"
-            className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white text-xs border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 px-3 py-1.5 rounded-lg transition-colors">
-            Admin
-          </Link>
+      <Navbar />
+      <div className="max-w-4xl mx-auto px-4 pt-4 pb-1 flex items-center justify-between">
+        <div>
+          <h1 className="text-base font-semibold text-slate-700 dark:text-slate-300">Management Committee</h1>
+          {term && <p className="text-slate-500 dark:text-slate-400 text-xs">Term {term}</p>}
         </div>
-      </header>
+        <Link href="/committee/admin"
+          className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white text-xs border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 px-3 py-1.5 rounded-lg transition-colors">
+          Admin
+        </Link>
+      </div>
 
-      <div className="max-w-4xl mx-auto px-4 py-5 space-y-8">
+      <div className="max-w-4xl mx-auto px-4 py-4 space-y-8">
         {officeBearers.length > 0 && (
           <section>
             <p className="text-slate-500 dark:text-slate-400 text-xs font-semibold uppercase tracking-wider mb-3">Office Bearers</p>
