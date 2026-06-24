@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
+import Navbar from '@/components/Navbar';
 import { supabase } from '@/lib/supabase';
 import { TOWER_COLORS, TOWER_TEXT_CLASSES } from '@/lib/utils';
 import type { CommitteeMember, CommitteeRole, TowerName } from '@/types';
@@ -248,39 +249,38 @@ export default function CommitteeAdmin() {
 
   return (
     <main className="min-h-screen bg-slate-950 text-white">
-      <header className="bg-slate-900 border-b border-slate-800 px-4 py-4 sticky top-0 z-10">
-        <div className="max-w-4xl mx-auto flex items-center justify-between">
-          <div>
-            <Link href="/committee" className="text-slate-400 hover:text-white transition-colors text-sm">
-              ← Committee
-            </Link>
-            <h1 className="text-lg font-bold text-white leading-tight mt-0.5">Admin</h1>
-          </div>
-          <div className="flex items-center gap-2">
-            {terms.length > 0 && (
-              <select
-                value={selectedTerm}
-                onChange={(e) => setSelectedTerm(e.target.value)}
-                className="bg-slate-800 border border-slate-700 text-white text-sm rounded-lg px-2 py-1.5 focus:outline-none focus:border-blue-500"
-              >
-                {terms.map((t) => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </select>
-            )}
-            {isCurrentTerm && (
-              <button
-                onClick={openAdd}
-                className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"
-              >
-                + Add
-              </button>
-            )}
-          </div>
+      <Navbar />
+      <div className="max-w-4xl mx-auto px-4 pt-4 pb-1 flex items-center justify-between">
+        <div>
+          <Link href="/committee" className="text-slate-500 hover:text-white transition-colors text-xs">
+            ← Committee
+          </Link>
+          <h1 className="text-base font-semibold text-slate-300 mt-0.5">Admin</h1>
         </div>
-      </header>
+        <div className="flex items-center gap-2">
+          {terms.length > 0 && (
+            <select
+              value={selectedTerm}
+              onChange={(e) => setSelectedTerm(e.target.value)}
+              className="bg-slate-800 border border-slate-700 text-white text-sm rounded-lg px-2 py-1.5 focus:outline-none focus:border-blue-500"
+            >
+              {terms.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+          )}
+          {isCurrentTerm && (
+            <button
+              onClick={openAdd}
+              className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"
+            >
+              + Add
+            </button>
+          )}
+        </div>
+      </div>
 
-      <div className="max-w-4xl mx-auto px-4 py-5 space-y-5">
+      <div className="max-w-4xl mx-auto px-4 py-4 space-y-5">
 
         {isCurrentTerm && (
           <div className="flex justify-between items-center">
