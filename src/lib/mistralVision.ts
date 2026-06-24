@@ -49,14 +49,86 @@ Return ONLY this JSON, no explanation:
   "Jupiter_DR": <integer or null>
 }`;
 
+/**
+ * Free fallback via OpenRouter: google/gemma-4-31b-it:free
+ * Used when MISTRAL_API_KEY is not set. Same prompt, same output shape.
+ * No cost — runs on OpenRouter free tier.
+ */
+async function extractTowerTotalsWithGemma(
+  base64: string,
+  mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif'
+): Promise<MistralVisionResult> {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    console.log('[gemma] OPENROUTER_API_KEY not set — skipping fallback');
+    return EMPTY_RESULT;
+  }
+
+  console.log('[gemma] Calling google/gemma-4-31b-it:free via OpenRouter');
+  try {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+        'HTTP-Referer': 'https://tw-water-automation.vercel.app',
+        'X-Title': 'TW Water Automation',
+      },
+      body: JSON.stringify({
+        model: 'google/gemma-4-31b-it:free',
+        max_tokens: 256,
+        temperature: 0,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: MISTRAL_PROMPT },
+              { type: 'image_url', image_url: { url: `data:${mediaType};base64,${base64}` } },
+            ],
+          },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.text();
+      console.error(`[gemma] API error ${response.status}: ${err.slice(0, 200)}`);
+      return EMPTY_RESULT;
+    }
+
+    const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+    const raw = data.choices?.[0]?.message?.content ?? '';
+    console.log(`[gemma] Raw: ${raw.slice(0, 200)}`);
+
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return { ...EMPTY_RESULT, rawText: raw };
+
+    const parsed = JSON.parse(jsonMatch[0]) as Record<string, number | null>;
+    const towers = ['Venus', 'Mercury', 'Neptune', 'Jupiter'] as const;
+    const types = ['DO', 'DR'] as const;
+    const readings: MistralTowerReading[] = [];
+    for (const tower of towers) {
+      for (const type of types) {
+        const val = parsed[`${tower}_${type}`];
+        readings.push({ tower, type, total_ltrs: typeof val === 'number' ? val : null });
+      }
+    }
+    console.log('[gemma] Readings:', readings.map(r => `${r.tower} ${r.type}=${r.total_ltrs}`).join(', '));
+    return { readings, rawText: raw, success: true };
+  } catch (err) {
+    console.error('[gemma] Unexpected error:', err);
+    return EMPTY_RESULT;
+  }
+}
+
 export async function extractTowerTotalsWithMistral(
   base64: string,
   mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif'
 ): Promise<MistralVisionResult> {
   const apiKey = process.env.MISTRAL_API_KEY;
   if (!apiKey) {
-    console.log('[mistral] MISTRAL_API_KEY not set — skipping');
-    return EMPTY_RESULT;
+    console.log('[mistral] MISTRAL_API_KEY not set — trying Gemma-4 fallback');
+    return extractTowerTotalsWithGemma(base64, mediaType);
   }
 
   console.log(`[mistral] Calling mistral-small-latest, base64 size: ${(base64.length / 1024).toFixed(1)}KB`);
