@@ -12,6 +12,7 @@ import { extractSheetData } from '@/lib/anthropic';
 import { extractTextFromImage } from '@/lib/googleVision';
 import { extractTextWithOcrSpace } from '@/lib/ocrSpace';
 import { extractTowerTotalsWithQwen } from '@/lib/qwenVision';
+import { extractTextWithMistralOcr } from '@/lib/mistralOcr';
 import { validateExtraction } from '@/lib/extractionValidator';
 
 const DATE_CONFIDENCE_THRESHOLD = 0.8;
@@ -98,10 +99,10 @@ export async function POST(request: NextRequest) {
 
         const base64 = buffer.toString('base64');
 
-        // ── Step 2: OCR engines + Mistral in parallel ─────────────────────────
-        log('info', 'Starting parallel OCR & vision engines…');
+        // ── Step 2: All parallel engines ──────────────────────────────────────
+        log('info', 'Starting parallel engines: Qwen3-VL + Mistral OCR 3 + Google Vision + OCR.space…');
 
-        const [qwenResult, visionResult, ocrSpaceResult] = await Promise.all([
+        const [qwenResult, mistralOcrResult, visionResult, ocrSpaceResult] = await Promise.all([
           extractTowerTotalsWithQwen(base64, mediaType).then(r => {
             if (r.success && r.readings.length > 0) {
               const summary = r.readings
@@ -110,6 +111,14 @@ export async function POST(request: NextRequest) {
               log('engine', 'Qwen3-VL-8B ✓', summary);
             } else {
               log('warn', 'Qwen3-VL-8B — no result', process.env.HF_TOKEN ? 'API returned empty' : 'HF_TOKEN not configured');
+            }
+            return r;
+          }),
+          extractTextWithMistralOcr(base64, mediaType).then(r => {
+            if (r.success) {
+              log('engine', 'Mistral OCR 3 ✓', `${r.markdown.length} chars extracted (handwriting specialist)`);
+            } else {
+              log('warn', 'Mistral OCR 3 — no result', process.env.MISTRAL_API_KEY ? 'API returned empty' : 'MISTRAL_API_KEY not configured');
             }
             return r;
           }),
@@ -132,8 +141,8 @@ export async function POST(request: NextRequest) {
         ]);
 
         // ── Step 3: Claude Haiku (+ possible Opus escalation) ─────────────────
-        log('info', 'Claude Haiku extracting all sheet data…');
-        const extracted = await extractSheetData(base64, mediaType, qwenResult);
+        log('info', `Claude Haiku extracting all sheet data${mistralOcrResult.success ? ' (with Mistral OCR hint)' : ''}…`);
+        const extracted = await extractSheetData(base64, mediaType, qwenResult, mistralOcrResult);
 
         // Detect whether Opus was used (flagged_fields contain opus_reason)
         const opusReason = extracted.flagged_fields?.find(f => f.startsWith('opus_reason:'));
