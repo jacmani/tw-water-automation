@@ -209,20 +209,18 @@ async function runExtraction(
 ): Promise<ExtractionResult> {
   // Build messages array — image always first, OCR transcript appended if available.
   // The transcript gives Haiku a structured text reference to resolve digit ambiguities.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const userContent: any[] = [
-    {
-      type: 'image',
-      source: { type: 'base64', media_type: mediaType, data: base64Image },
-    },
-  ];
+  // We use 'as Parameters<...>[0]["messages"][0]["content"]' to satisfy the beta SDK's
+  // strict union type without importing internal SDK types.
+  const imageBlock = {
+    type: 'image' as const,
+    source: { type: 'base64' as const, media_type: mediaType, data: base64Image },
+  };
+  const textBlock = ocrTranscript ? {
+    type: 'text' as const,
+    text: `\n\n--- MISTRAL OCR TRANSCRIPT (purpose-built handwriting OCR, high accuracy) ---\nUse this as a reference to resolve any digit ambiguities you see in the image above.\nIf a number in the image is unclear, prefer the value shown in this transcript.\nHowever, the transcript may have table alignment errors — always verify against the image.\n\n${ocrTranscript}\n--- END TRANSCRIPT ---`,
+  } : null;
 
-  if (ocrTranscript) {
-    userContent.push({
-      type: 'text',
-      text: `\n\n--- MISTRAL OCR TRANSCRIPT (purpose-built handwriting OCR, high accuracy) ---\nUse this as a reference to resolve any digit ambiguities you see in the image above.\nIf a number in the image is unclear, prefer the value shown in this transcript.\nHowever, the transcript may have table alignment errors — always verify against the image.\n\n${ocrTranscript}\n--- END TRANSCRIPT ---`,
-    });
-  }
+  const userContent = textBlock ? [imageBlock, textBlock] : [imageBlock];
 
   const response = await anthropic.beta.promptCaching.messages.create({
     model,
@@ -231,8 +229,7 @@ async function runExtraction(
     messages: [
       {
         role: 'user',
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        content: userContent as any,
+        content: userContent as Parameters<typeof anthropic.beta.promptCaching.messages.create>[0]['messages'][0]['content'],
       },
     ],
   });
