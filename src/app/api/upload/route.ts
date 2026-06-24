@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
 import { extractSheetData } from '@/lib/anthropic';
 import { extractTextFromImage } from '@/lib/googleVision';
+import { extractTextWithOcrSpace } from '@/lib/ocrSpace';
 import { validateExtraction } from '@/lib/extractionValidator';
 
 const DATE_CONFIDENCE_THRESHOLD = 0.8;
@@ -58,13 +59,15 @@ export async function POST(request: NextRequest) {
   let visionValidated = false;
   try {
     const base64 = buffer.toString('base64');
-    const [claudeResult, visionResult] = await Promise.all([
+    // Run Claude + both OCR engines in parallel for maximum speed
+    const [claudeResult, visionResult, ocrSpaceResult] = await Promise.all([
       extractSheetData(base64, mediaType),
       extractTextFromImage(base64),
+      extractTextWithOcrSpace(base64, mediaType),
     ]);
     extracted = claudeResult;
 
-    const validation = validateExtraction(extracted, visionResult);
+    const validation = validateExtraction(extracted, visionResult, ocrSpaceResult);
     extracted.overall_confidence = Math.min(1, extracted.overall_confidence + validation.confidenceBoost);
     extracted.flagged_fields = [...extracted.flagged_fields, ...validation.flags];
     if (validation.dateMismatch) {
@@ -73,7 +76,8 @@ export async function POST(request: NextRequest) {
     if (validation.visionDate !== null && extracted.date_confidence < DATE_CONFIDENCE_THRESHOLD) {
       extracted.date = validation.visionDate;
     }
-    visionValidated = visionResult.words.length > 0;
+    visionValidated = visionResult.words.length > 0 || (ocrSpaceResult?.words.length ?? 0) > 0;
+    console.log(`[upload] OCR sources active: ${validation.ocrSources.join(', ') || 'none'}`);
   } catch (err) {
     console.error('Extraction error:', err);
     await supabase.storage.from('sheet-images').remove([fileName]);
