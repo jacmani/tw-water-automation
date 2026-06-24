@@ -11,7 +11,7 @@ import { createServerClient } from '@/lib/supabase';
 import { extractSheetData } from '@/lib/anthropic';
 import { extractTextFromImage } from '@/lib/googleVision';
 import { extractTextWithOcrSpace } from '@/lib/ocrSpace';
-import { extractTowerTotalsWithMistral } from '@/lib/mistralVision';
+import { extractTowerTotalsWithQwen } from '@/lib/qwenVision';
 import { validateExtraction } from '@/lib/extractionValidator';
 
 const DATE_CONFIDENCE_THRESHOLD = 0.8;
@@ -101,15 +101,15 @@ export async function POST(request: NextRequest) {
         // ── Step 2: OCR engines + Mistral in parallel ─────────────────────────
         log('info', 'Starting parallel OCR & vision engines…');
 
-        const [mistralResult, visionResult, ocrSpaceResult] = await Promise.all([
-          extractTowerTotalsWithMistral(base64, mediaType).then(r => {
+        const [qwenResult, visionResult, ocrSpaceResult] = await Promise.all([
+          extractTowerTotalsWithQwen(base64, mediaType).then(r => {
             if (r.success && r.readings.length > 0) {
               const summary = r.readings
                 .map(x => `${x.tower} ${x.type}=${x.total_ltrs != null ? (x.total_ltrs/1000).toFixed(0)+'kL' : '?'}`)
                 .join(', ');
-              log('engine', 'Mistral Small ✓', summary);
+              log('engine', 'Qwen3-VL-8B ✓', summary);
             } else {
-              log('warn', 'Mistral Small — no result', process.env.MISTRAL_API_KEY ? 'API returned empty' : 'API key not configured');
+              log('warn', 'Qwen3-VL-8B — no result', process.env.HF_TOKEN ? 'API returned empty' : 'HF_TOKEN not configured');
             }
             return r;
           }),
@@ -133,16 +133,21 @@ export async function POST(request: NextRequest) {
 
         // ── Step 3: Claude Haiku (+ possible Opus escalation) ─────────────────
         log('info', 'Claude Haiku extracting all sheet data…');
-        const extracted = await extractSheetData(base64, mediaType, mistralResult);
+        const extracted = await extractSheetData(base64, mediaType, qwenResult);
 
         // Detect whether Opus was used (flagged_fields contain opus_reason)
         const opusReason = extracted.flagged_fields?.find(f => f.startsWith('opus_reason:'));
+        const autoFixed = extracted.flagged_fields?.find(f => f.includes('auto_corrected'));
         if (opusReason) {
           const reason = opusReason.replace('opus_reason:', '');
-          log('warn', 'Claude Opus escalated', `Reason: ${reason}`);
-          log('success', `Claude Opus ✓`, `confidence ${(extracted.overall_confidence * 100).toFixed(0)}%`);
+          log('warn', 'Haiku/Qwen disagreed — Claude Opus called', reason);
+          if (autoFixed) {
+            log('warn', 'Claude Opus ✓ (with auto-correction)', `Both models failed sanity — vol_today used as source of truth`);
+          } else {
+            log('success', `Claude Opus ✓`, `confidence ${(extracted.overall_confidence * 100).toFixed(0)}%`);
+          }
         } else {
-          log('success', `Claude Haiku ✓`, `confidence ${(extracted.overall_confidence * 100).toFixed(0)}%, Opus not needed`);
+          log('success', `Claude Haiku ✓`, `Qwen3-VL agrees — confidence ${(extracted.overall_confidence * 100).toFixed(0)}%, Opus not needed`);
         }
 
         // ── Step 4: Validation ────────────────────────────────────────────────
