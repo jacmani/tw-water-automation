@@ -4,6 +4,7 @@ import { extractSheetData } from '@/lib/anthropic';
 import { extractTextFromImage } from '@/lib/googleVision';
 import { extractTextWithOcrSpace } from '@/lib/ocrSpace';
 import { extractTowerTotalsWithQwen } from '@/lib/qwenVision';
+import { extractTextWithMistralOcr } from '@/lib/mistralOcr';
 import { validateExtraction } from '@/lib/extractionValidator';
 
 const DATE_CONFIDENCE_THRESHOLD = 0.8;
@@ -60,15 +61,20 @@ export async function POST(request: NextRequest) {
   let visionValidated = false;
   try {
     const base64 = buffer.toString('base64');
-    // Phase 1: run Qwen3-VL + both OCR engines in parallel (independent of Haiku)
-    const [qwenResult, visionResult, ocrSpaceResult] = await Promise.all([
+    // Phase 1: run Qwen3-VL + Mistral OCR 3 + Google Vision + OCR.space in parallel
+    const [qwenResult, mistralOcrResult, visionResult, ocrSpaceResult] = await Promise.all([
       extractTowerTotalsWithQwen(base64, mediaType),
+      extractTextWithMistralOcr(base64, mediaType),
       extractTextFromImage(base64),
       extractTextWithOcrSpace(base64, mediaType),
     ]);
 
-    // Phase 2: run Haiku, comparing against Qwen to decide if Opus is needed
-    const claudeResult = await extractSheetData(base64, mediaType, qwenResult);
+    if (mistralOcrResult.success) {
+      console.log(`[upload] Mistral OCR 3 transcript: ${mistralOcrResult.markdown.length} chars`);
+    }
+
+    // Phase 2: run Haiku with OCR transcript hint, compare against Qwen for Opus decision
+    const claudeResult = await extractSheetData(base64, mediaType, qwenResult, mistralOcrResult);
     extracted = claudeResult;
 
     const validation = validateExtraction(extracted, visionResult, ocrSpaceResult);
