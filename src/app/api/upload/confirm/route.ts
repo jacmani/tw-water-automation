@@ -25,6 +25,20 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid date format' }, { status: 400 });
   }
 
+  // Reject empty extractions — at least 4 towers must have a non-null total_ltrs
+  // (either DO or DR). Prevents a failed Claude response from overwriting good data.
+  const towersWithData = ['Venus', 'Mercury', 'Neptune', 'Jupiter'].filter((t) => {
+    const tower = extraction.tower_section?.[t];
+    return tower && (tower.DO?.total_ltrs != null || tower.DR?.total_ltrs != null);
+  });
+  if (towersWithData.length < 4) {
+    console.error(`[confirm] Rejecting empty extraction — only ${towersWithData.length}/4 towers have data`);
+    return NextResponse.json(
+      { error: 'Extraction produced no tower data. Please re-upload a clearer photo.' },
+      { status: 422 }
+    );
+  }
+
   // 'ai' = AI read date confidently; 'manual' = user entered date because AI couldn't read it
   const resolvedDateSource = date_source === 'manual' ? 'manual' : 'ai';
 
