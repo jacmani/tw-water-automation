@@ -71,7 +71,13 @@ export async function extractTextFromImage(base64: string): Promise<GoogleVision
 
     if (!response.ok) {
       const errBody = await response.text();
-      console.error(`[vision] API error ${response.status}: ${errBody.slice(0, 300)}`);
+      if (response.status === 403) {
+        console.error('[vision] 403 Forbidden — Cloud Vision API is NOT enabled on your GCP project. Go to console.cloud.google.com → APIs & Services → Enable APIs → search "Cloud Vision API" → Enable it.');
+      } else if (response.status === 400) {
+        console.error('[vision] 400 Bad Request — check API key restrictions or request format');
+      } else {
+        console.error(`[vision] API error ${response.status}: ${errBody.slice(0, 300)}`);
+      }
       return EMPTY_RESULT;
     }
 
