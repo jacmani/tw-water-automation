@@ -440,7 +440,7 @@ function DatePickerScreen({ imageUrl, aiGuess, onConfirm, onRetake }: DatePicker
     return ist.toISOString().slice(0, 10);
   };
 
-  const [selectedDate, setSelectedDate] = useState<string>(aiGuess ?? todayIST());
+  const [selectedDate, setSelectedDate] = useState<string>(todayIST());
   const [error, setError] = useState<string>('');
 
   function handleConfirm() {
@@ -490,9 +490,9 @@ function DatePickerScreen({ imageUrl, aiGuess, onConfirm, onRetake }: DatePicker
           />
           {error && <p className="text-red-400 text-xs mt-1.5">{error}</p>}
         </div>
-        {aiGuess && aiGuess !== selectedDate && (
+        {aiGuess && (
           <p className="text-slate-500 text-xs">
-            AI guessed: {formatDate(aiGuess)} — change if incorrect.
+            AI guessed: {formatDate(aiGuess)}{aiGuess !== selectedDate ? ' — change above if different.' : ''}
           </p>
         )}
         <div className="bg-blue-950/50 border border-blue-800/50 rounded-lg px-3 py-2 flex gap-2 items-start">
