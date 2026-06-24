@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, ChangeEvent, FormEvent } from 'react';
 import Link from 'next/link';
+import Navbar from '@/components/Navbar';
 import Image from 'next/image';
 import imageCompression from 'browser-image-compression';
 import type { ExtractionResult } from '@/types';
@@ -731,19 +732,11 @@ export default function UploadPage() {
 
   return (
     <main className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white flex flex-col">
-      <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-4">
-        <div className="max-w-lg mx-auto flex items-center gap-3">
-          <Link href="/" className="text-slate-400 hover:text-white transition-colors">
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-          </Link>
-          <div>
-            <h1 className="text-lg font-bold text-slate-900 dark:text-white">Upload Sheet</h1>
-            <p className="text-slate-500 dark:text-slate-400 text-xs">Trinity World Water Consumption</p>
-          </div>
-        </div>
-      </header>
+      <Navbar />
+      <div className="max-w-lg mx-auto w-full px-4 pt-4 pb-1">
+        <h1 className="text-base font-semibold text-slate-700 dark:text-slate-300">Upload Sheet</h1>
+        <p className="text-slate-500 dark:text-slate-400 text-xs">Trinity World Water Consumption</p>
+      </div>
 
       <div className="flex-1 max-w-lg mx-auto w-full px-4 py-6">
 
