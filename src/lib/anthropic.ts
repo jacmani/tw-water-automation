@@ -204,8 +204,26 @@ Return ONLY a valid JSON object — no markdown, no explanation. Use null for bl
 async function runExtraction(
   base64Image: string,
   mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
-  model: string
+  model: string,
+  ocrTranscript?: string
 ): Promise<ExtractionResult> {
+  // Build messages array — image always first, OCR transcript appended if available.
+  // The transcript gives Haiku a structured text reference to resolve digit ambiguities.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const userContent: any[] = [
+    {
+      type: 'image',
+      source: { type: 'base64', media_type: mediaType, data: base64Image },
+    },
+  ];
+
+  if (ocrTranscript) {
+    userContent.push({
+      type: 'text',
+      text: `\n\n--- MISTRAL OCR TRANSCRIPT (purpose-built handwriting OCR, high accuracy) ---\nUse this as a reference to resolve any digit ambiguities you see in the image above.\nIf a number in the image is unclear, prefer the value shown in this transcript.\nHowever, the transcript may have table alignment errors — always verify against the image.\n\n${ocrTranscript}\n--- END TRANSCRIPT ---`,
+    });
+  }
+
   const response = await anthropic.beta.promptCaching.messages.create({
     model,
     max_tokens: 4096,
@@ -213,12 +231,8 @@ async function runExtraction(
     messages: [
       {
         role: 'user',
-        content: [
-          {
-            type: 'image',
-            source: { type: 'base64', media_type: mediaType, data: base64Image },
-          },
-        ],
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        content: userContent as any,
       },
     ],
   });
@@ -310,6 +324,7 @@ function applyCorrections(result: ExtractionResult, corrections: SanityReport['c
 }
 
 import type { QwenVisionResult } from './qwenVision';
+import type { MistralOcrResult } from './mistralOcr';
 
 /**
  * Compare Haiku tower totals against Qwen3-VL's independent reading.
@@ -358,20 +373,25 @@ function findQwenDisagreements(
 export async function extractSheetData(
   base64Image: string,
   mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
-  qwenResult?: QwenVisionResult
+  qwenResult?: QwenVisionResult,
+  mistralOcr?: MistralOcrResult
 ): Promise<ExtractionResult> {
-  const result = await runExtraction(base64Image, mediaType, PRIMARY_MODEL);
-  console.log(`[extraction] Haiku confidence=${result.overall_confidence}`);
+  // Use Mistral OCR transcript as a hint if available — gives Haiku a structured
+  // text version of the same sheet to resolve digit ambiguities against
+  const ocrTranscript = mistralOcr?.success ? mistralOcr.markdown : undefined;
+
+  const result = await runExtraction(base64Image, mediaType, PRIMARY_MODEL, ocrTranscript);
+  console.log(`[extraction] Haiku confidence=${result.overall_confidence}${ocrTranscript ? ' (with Mistral OCR hint)' : ''}`);
 
   // ── Check 1: Qwen3-VL disagrees with Haiku ──────────────────────────────────
-  // This is the primary guard against digit misreads (1 vs 7, etc).
   // Two models with different architectures reading the same handwritten digit
   // independently — agreement = very high confidence in the reading.
   if (qwenResult) {
     const disagreements = findQwenDisagreements(result, qwenResult);
     if (disagreements.length > 0) {
       console.log(`[extraction] Haiku/Qwen3-VL disagree on ${disagreements.length} field(s) → Opus`);
-      const opusResult = await runExtraction(base64Image, mediaType, FALLBACK_MODEL);
+      // Opus also gets the OCR transcript — gives it the best possible context
+      const opusResult = await runExtraction(base64Image, mediaType, FALLBACK_MODEL, ocrTranscript);
       console.log(`[extraction] Opus confidence=${opusResult.overall_confidence}`);
 
       // Run sanity on Opus too — both Haiku AND Opus can share the same misread
@@ -399,7 +419,7 @@ export async function extractSheetData(
   const haikuSanity = checkSanity(result);
   if (haikuSanity.violated) {
     console.log(`[extraction] Haiku sanity violation → Opus`);
-    const opusResult = await runExtraction(base64Image, mediaType, FALLBACK_MODEL);
+    const opusResult = await runExtraction(base64Image, mediaType, FALLBACK_MODEL, ocrTranscript);
     console.log(`[extraction] Opus confidence=${opusResult.overall_confidence}`);
 
     const opusSanity = checkSanity(opusResult);
@@ -420,7 +440,7 @@ export async function extractSheetData(
   // ── Check 3: low confidence (last resort) ───────────────────────────────────
   if (result.overall_confidence < CONFIDENCE_THRESHOLD) {
     console.log(`[extraction] Haiku low confidence (${result.overall_confidence}) → Opus`);
-    const opusResult = await runExtraction(base64Image, mediaType, FALLBACK_MODEL);
+    const opusResult = await runExtraction(base64Image, mediaType, FALLBACK_MODEL, ocrTranscript);
     console.log(`[extraction] Opus confidence=${opusResult.overall_confidence}`);
 
     const opusSanity = checkSanity(opusResult);
