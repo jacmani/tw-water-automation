@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import Navbar from '@/components/Navbar';
 import { getLogEntry, getMostRecentLogDate, getLogDates } from '@/lib/supabase';
 import { formatDate, formatMediumDate } from '@/lib/utils';
 import PrintButton from '@/components/logbook/PrintButton';
@@ -180,27 +181,26 @@ export default async function LogbookPage({
 
   return (
     <main className="min-h-screen bg-slate-950 text-white print:bg-white print:text-slate-900">
-      {/* Header */}
-      <header className="bg-slate-900 border-b border-slate-800 px-4 py-4 sticky top-0 z-10 print:hidden">
-        <div className="max-w-4xl mx-auto flex items-center justify-between gap-4">
-          <div>
-            <Link href="/" className="text-slate-400 hover:text-white text-sm">← Dashboard</Link>
-            <h1 className="text-lg font-bold text-white leading-tight mt-0.5">Water Consumption Log Book</h1>
-            {selectedDate && <p className="text-slate-400 text-xs">{formatDate(selectedDate)}</p>}
-          </div>
-          <div className="flex items-center gap-2">
-            <Link
-              href="/upload/logbook"
-              className="text-xs border border-slate-700 hover:border-blue-500 text-slate-400 hover:text-white px-3 py-1.5 rounded-lg transition-colors"
-            >
-              + Add Entry
-            </Link>
-            <PrintButton />
-          </div>
+      <div className="print:hidden">
+        <Navbar />
+      </div>
+      <div className="max-w-4xl mx-auto px-4 pt-4 pb-1 flex items-center justify-between print:hidden">
+        <div>
+          <h1 className="text-base font-semibold text-slate-300">Water Consumption Log Book</h1>
+          {selectedDate && <p className="text-slate-500 text-xs">{formatDate(selectedDate)}</p>}
         </div>
-      </header>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/upload/logbook"
+            className="text-xs border border-slate-700 hover:border-blue-500 text-slate-400 hover:text-white px-3 py-1.5 rounded-lg transition-colors"
+          >
+            + Add Entry
+          </Link>
+          <PrintButton />
+        </div>
+      </div>
 
-      <div className="max-w-4xl mx-auto px-4 py-5 space-y-5">
+      <div className="max-w-4xl mx-auto px-4 py-4 space-y-5">
 
         {/* Date picker */}
         <div className="flex items-center gap-3 print:hidden">
