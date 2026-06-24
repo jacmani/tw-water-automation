@@ -1,462 +1,285 @@
 # Trinity World Water Automation
 
-**Live:** https://tw-water-automation.vercel.app  
-**Repo:** https://github.com/jacmani/tw-water-automation  
-**Current version:** v2.0.0 — Multi-Engine OCR AI Architecture
+Daily water consumption tracking system for Trinity World residential community. A technician photographs the handwritten meter reading sheet each morning; a five-engine AI pipeline extracts every field; structured data lands in Postgres and surfaces on a dashboard for the Association committee.
 
-A full-stack web application for Trinity World residential apartment complex that replaces the WhatsApp photo dead-end. Every morning a technician fills a handwritten A3 water meter reading sheet. Previously: photo goes to WhatsApp, vanishes. Now: photo uploads to this system, a five-engine AI pipeline extracts the data, it's stored in Supabase, and the committee gets structured dashboards, cross-validation logs, and shareable infographics.
+## Live
 
----
-
-## For AI Agents Reading This File
-
-If you are an AI agent working on this codebase, read this entire file before touching any code. Key facts:
-
-- **Live URL:** https://tw-water-automation.vercel.app — auto-deploys from `main` via Vercel
-- **Push method:** Use the GitHub Contents API (PUT) with the PAT in CLAUDE.md — the local git index.lock is stale in the sandbox
-- **Database:** Supabase Postgres. All migrations are in `supabase/migrations/`. Run manually in Supabase SQL editor
-- **Never rename** the Vercel project, GitHub repo, or Supabase project
-- **`RESEND_SANDBOX`** must stay `true` unless explicitly told otherwise
-- The most critical file is `src/lib/anthropic.ts` — the five-engine extraction pipeline lives here
-- Tower colors are canonical: Venus=#7C3AED, Mercury=#2563EB, Neptune=#059669, Jupiter=#EA580C
-- The `superseded` column on `daily_sheets` is the deduplication invariant — always filter `.eq('superseded', false)` in queries
-- `mistralVision.ts` exists but is NOT called in the main pipeline — it is legacy code kept for reference
+| Page | URL |
+|------|-----|
+| Dashboard | https://tw-water-automation.vercel.app |
+| Upload Sheet | https://tw-water-automation.vercel.app/upload |
+| Consumption History | https://tw-water-automation.vercel.app/history |
+| Committee Registry | https://tw-water-automation.vercel.app/committee |
+| Alert Log | https://tw-water-automation.vercel.app/alerts |
 
 ---
 
-## Stack
+## What It Does
 
-| Layer | Technology | Notes |
-|-------|-----------|-------|
-| Framework | Next.js 14 App Router | Server components for DB reads, client for interactivity |
-| Database + Storage | Supabase (Postgres + S3) | Managed, RLS permissive in v1 |
-| Hosting | Vercel | Auto-deploy from main, Hobby plan |
-| AI Extraction | Claude Haiku (primary) + Claude Opus (escalation) | Prompt caching enabled |
-| Parallel Validator | Qwen3-VL-8B via HuggingFace Router (Novita) | Different visual encoder to Claude, $0.08/M tokens |
-| Handwriting OCR | Mistral OCR 3 (mistral-ocr-2512) | 88.9% handwriting accuracy, $0.002/page |
-| Word OCR | Google Vision DOCUMENT_TEXT_DETECTION | Date + number corroboration |
-| Table OCR | OCR.space Engine 2 (isTable=true) | Free tier, 500 req/day |
-| Charts | Recharts | SSR-compatible, works with html-to-image |
-| Infographic Export | html-to-image + gif.js | PNG + animated GIF at 2× pixel ratio |
-| Email Alerts | Resend | Spike alerts + weekly + monthly cron reports |
+1. Technician photographs the daily water sheet and opens `/upload` on their phone
+2. Photo uploads to Supabase Storage
+3. Five AI engines run in parallel — Qwen3-VL-8B, Mistral OCR 3, Google Vision, OCR.space, and Claude Haiku — each reading the sheet independently
+4. Claude Haiku extracts every handwritten field (6 sections, 50+ values) using the Mistral OCR transcript as a disambiguation hint
+5. If Haiku and Qwen3-VL disagree on any tower reading, Claude Opus is escalated automatically
+6. Data stored across 8 Postgres tables
+7. Dashboard shows live tower consumption cards, community totals, 7-day trend chart, and a live IST clock
+8. Three infographic templates export as animated GIF or PNG for WhatsApp sharing
+9. Spike alerts email the committee automatically if any tower exceeds its 7-day average by ≥15%
+10. Weekly and monthly summary reports run via Vercel Cron
 
 ---
 
-## Five-Engine OCR Pipeline (v2.0.0)
+## Setup
 
-Every upload runs five AI engines to achieve robust extraction of handwritten data, with special focus on the recurring digit confusion problem (handwritten 7 with short crossbar reads as 1 — e.g. 1,76,000 misread as 1,16,000 = 60kL error on Mercury tower).
-
-### Architecture
-
-```
-Phase 1 — Parallel (all fire simultaneously):
-  ┌─ Qwen3-VL-8B (HuggingFace Router / Novita provider)
-  │    → Reads all 8 tower totals independently
-  │    → Different visual encoder to Claude (DeepStack architecture)
-  │    → $0.00012/upload, 574ms latency
-  │    → Env: HF_TOKEN
-  │
-  ├─ Mistral OCR 3 (mistral-ocr-2512)
-  │    → Full sheet → structured Markdown transcript
-  │    → Purpose-built for handwriting + dense tables
-  │    → 88.9% handwriting accuracy benchmark
-  │    → Transcript injected into Haiku's context window as hint
-  │    → Env: MISTRAL_API_KEY
-  │
-  ├─ Google Vision (DOCUMENT_TEXT_DETECTION)
-  │    → Word-level tokens for date + number corroboration
-  │    → ~$0.0015/image
-  │    → Env: GOOGLE_CLOUD_VISION_API_KEY
-  │
-  └─ OCR.space Engine 2 (isTable=true)
-       → Second word list, free tier
-       → Cross-validates dates
-       → Env: OCR_SPACE_API_KEY
-
-Phase 2 — Sequential:
-  Claude Haiku (primary full extractor)
-    → Reads image pixels + Mistral OCR transcript simultaneously
-    → Extracts all 6 sections of the sheet into structured JSON
-    │
-    ├─ [Qwen agrees, ratio ≥0.85 on all tower rows]
-    │     → Accept Haiku result. Opus NOT called. ✓
-    │
-    ├─ [Qwen disagrees on any row]
-    │     → Claude Opus escalation (also gets Mistral OCR transcript)
-    │     → Sanity check on Opus result (total_ltrs vs vol_today ratio)
-    │     └─ [Opus also fails sanity] → vol_today auto-correction, confidence=0.65
-    │
-    ├─ [Haiku sanity violation, Qwen absent]
-    │     → Claude Opus escalation → same sanity + auto-correction path
-    │
-    └─ [Overall confidence < 0.80]
-          → Claude Opus escalation → sanity check
-```
-
-### Why This Catches Digit Misreads
-
-The 1 vs 7 confusion is geometric — no image preprocessing fixes it. The defence is multi-model agreement:
-
-1. **Qwen3-VL** uses a different visual encoder (DeepStack) than Claude. When two architecturally independent models read the same digit differently, that's a signal — not noise.
-2. **Mistral OCR 3** gives Claude a text transcript of the same numbers. Haiku reads both pixel and text simultaneously, resolving digit ambiguities against the transcript.
-3. **`vol_today` auto-correction** — if both Haiku and Opus misread `total_ltrs`, the independent `vol_today` column (a physically separate reading on the sheet) is substituted and flagged at confidence 0.65 for human review.
-
-### Sanity Checks
-
-| Field | Expected Range | Violation action |
-|-------|---------------|-----------------|
-| Tower DO `total_ltrs` | 50,000–250,000 L | Escalate to Opus |
-| Tower DR `total_ltrs` | 5,000–40,000 L | Escalate to Opus |
-| `total_ltrs` / `vol_today` ratio | 0.6–1.8 | Escalate to Opus; auto-correct if Opus also fails |
-| `summary.input_total` | 150,000–900,000 L | Flag in `flagged_fields` |
-| `summary.tower_usage` | 300,000–800,000 L | Flag in `flagged_fields` |
-
-### Cost Per Upload
-
-| Engine | Cost |
-|--------|------|
-| Qwen3-VL-8B | ~$0.00012 |
-| Mistral OCR 3 | ~$0.002 |
-| Google Vision | ~$0.0015 |
-| OCR.space | $0 (free) |
-| Claude Haiku | ~$0.003 |
-| Claude Opus (escalation ~20% of uploads) | ~$0.005 avg |
-| **Total per upload** | **~$0.007** |
-| **Annual (365 uploads)** | **~$2.55/year** |
-
-### Live Log on Upload Page
-
-The `/upload` page shows a real-time terminal-style log via Server-Sent Events (SSE) at `/api/upload/stream`. Each engine reports its result as it completes, including elapsed time and whether Opus was triggered.
-
----
-
-## The Physical Sheet
-
-Handwritten A3 sheet, 6 sections:
-
-**Section 1 — Tower Section** (primary accountability)  
-Four towers: Venus, Mercury, Neptune, Jupiter. Each has DO (Domestic/Overhead) and DR (Drinking) rows.  
-Columns: R Y Day, R T Day, Total Litres, Volume Yesterday, Volume Today, Diff
-
-**Section 2 — Source/Location Section**  
-Rows: M+V DO with MTR, J+N DO with JTR, V Well 1+2+3, V Well 4+B1+B2, N Well 5, N Well 6, ON Outside Well, Kingsley  
-Columns: R Y Day, R Today, Yesterday in Ltrs, Today in Ltrs, Total
-
-**Section 3 — Water Level Section**  
-Tanks: JDO, JDR, CT, MDO, MDR, Fire Tank — measured 4× daily (6AM, 12PM, 6PM, 12AM)  
-Format: `CM/Percentage` e.g. `80/26` = 80cm, 26% full. 24 readings per day.
-
-**Section 4 — Amenities**  
-Car Wash: Jupiter, Mercury, Venus, Neptune | Swimming Pool: Meter 3, Meter 4, Meter 5
-
-**Section 5 — Party Hall**  
-Meters: Meter 6, Meter 7, WTP1, WTP2, VUF, JUF, Venus STP
-
-**Section 6 — Water Consumption Summary**  
-V Side Well B1+B2, N Side Well+B3, JTR Tanker, MTR Tanker, IN PUT total, Tower Usage (OUT PUT), Diff  
-Key invariant: Tower Usage ≈ total from Tower Section. Large Diff = anomaly.
-
-Indian number format throughout: 1,76,000 = 176,000 (one lakh seventy-six thousand).
-
----
-
-## Data Model
-
-### `daily_sheets`
-| Field | Type | Notes |
-|-------|------|-------|
-| id | UUID PK | |
-| date | DATE | Sheet date |
-| uploaded_by | TEXT | Nullable, no auth in v1 |
-| image_url | TEXT | Supabase storage public URL |
-| processed_status | TEXT | `pending` / `processed` / `failed` |
-| confidence_score | DECIMAL(3,2) | Overall extraction confidence 0–1 |
-| date_source | TEXT | `ai` or `manual` |
-| superseded | BOOLEAN | `false` = canonical; `true` = older duplicate |
-| created_at | TIMESTAMPTZ | |
-
-**Deduplication invariant:** If multiple sheets share the same `date`, newest = canonical (`superseded=false`). All trend queries, dashboard reads, and averages filter `.eq('superseded', false)`.
-
-### `tower_consumption`
-| Field | Type | Notes |
-|-------|------|-------|
-| id | UUID PK | |
-| sheet_id | UUID FK | → daily_sheets |
-| tower | TEXT | Venus / Mercury / Neptune / Jupiter |
-| type | TEXT | DO or DR |
-| r_yesterday | DECIMAL | |
-| r_today | DECIMAL | |
-| total_ltrs | DECIMAL | Primary consumption figure |
-| vol_yesterday | DECIMAL | |
-| vol_today | DECIMAL | Independent column — used as sanity cross-check and auto-correction source |
-| diff | DECIMAL | |
-| confidence | DECIMAL(3,2) | Per-row confidence. 0.65 = auto-corrected, needs human review |
-
-### `water_sources`
-| Field | Type | Notes |
-|-------|------|-------|
-| id | UUID PK | |
-| sheet_id | UUID FK | |
-| location | TEXT | e.g. `M+V DO with MTR` |
-| r_yesterday | DECIMAL | |
-| r_today | DECIMAL | |
-| yesterday_ltrs | DECIMAL | |
-| today_ltrs | DECIMAL | |
-| total | DECIMAL | |
-
-### `water_levels`
-6 tanks × 4 time slots = 24 rows/day. Fields: tank, time_slot, cm_reading, percentage.
-
-### `amenities`
-Section field: `Car Wash`, `Swimming Pool`, or `Party Hall`. Fields: meter_name, y_day, r_day, diff.
-
-### `summary`
-Fields: v_side, n_side, jtr_tanker, mtr_tanker, input_total, tower_usage, diff.
-
-### `committee_members`
-| Field | Type | Notes |
-|-------|------|-------|
-| id | UUID PK | |
-| term | TEXT | e.g. `2026-27` |
-| name | TEXT | |
-| role | TEXT | One of 10 roles |
-| tower | TEXT | Nullable |
-| apartment | TEXT | Nullable |
-| phone | TEXT | Nullable |
-| email | TEXT | Nullable — used for alert emails |
-| whatsapp_optin | BOOLEAN | |
-| active | BOOLEAN | false = deactivated, not deleted |
-
-**Roles (display order):** President, Vice President, Secretary, Joint Secretary, Treasurer, Joint Treasurer, Technical Expert, Financial Expert, GC Chair, GC Member
-
-### `alert_log`
-| Field | Type | Notes |
-|-------|------|-------|
-| id | UUID PK | |
-| alert_type | TEXT | `spike` / `weekly` / `monthly` |
-| sheet_date | DATE | Null for aggregate reports |
-| tower | TEXT | Null for community-wide |
-| recipients | TEXT[] | |
-| subject | TEXT | |
-| sent_at | TIMESTAMPTZ | |
-| status | TEXT | `sent` / `error` |
-| details | JSONB | resend_id, error string, sandbox flag |
-
----
-
-## Application Routes
-
-| Route | Type | Purpose |
-|-------|------|---------|
-| `/` | Server Component | Dashboard — today's data, 7-day trend, infographic export |
-| `/upload` | Client Component | Mobile-first photo upload with live SSE engine log |
-| `/history` | Client Component | Daily table + heatmap, cross-check flags, CSV export |
-| `/committee` | Server Component | Public committee registry grouped by role and tower |
-| `/committee/admin` | Client Component | Add/edit/deactivate members, start new term with cloning |
-| `/alerts` | Server Component | Email send history / sandbox verification |
-| `/api/upload` | POST | Image → storage → all engines → pending response |
-| `/api/upload/stream` | POST SSE | Same pipeline with live Server-Sent Events log |
-| `/api/upload/confirm` | POST | Commit pending extraction to DB, trigger spike alerts |
-| `/api/cron/weekly-report` | GET | Vercel cron — Monday 08:00 IST (`30 2 * * 1`) |
-| `/api/cron/monthly-report` | GET | Vercel cron — 1st of month 08:00 IST (`30 2 1 * *`) |
-
----
-
-## Source Files — Key
-
-| File | Purpose |
-|------|---------|
-| `src/lib/anthropic.ts` | Core pipeline — Haiku, Opus, Qwen comparison, sanity checks, vol_today auto-correction, Mistral OCR context injection |
-| `src/lib/qwenVision.ts` | Qwen3-VL-8B via HuggingFace Router — parallel tower extractor |
-| `src/lib/mistralOcr.ts` | Mistral OCR 3 — handwriting transcript injected into Haiku context |
-| `src/lib/googleVision.ts` | Google Vision word-level OCR |
-| `src/lib/ocrSpace.ts` | OCR.space Engine 2 |
-| `src/lib/extractionValidator.ts` | Cross-validates Claude output against Vision/OCR word lists, confidence boost |
-| `src/lib/mistralVision.ts` | Legacy — Mistral Small + Gemma-4 fallback. Not called in main pipeline. |
-| `src/lib/email.ts` | Resend email templates — spike, weekly, monthly |
-| `src/lib/supabase.ts` | Supabase client factory — server + client variants |
-| `src/components/history/flagging.ts` | Client-side cross-check flagging (summary_misread, digit_drop, etc.) |
-
----
-
-## Environment Variables
+### 1. Clone and install
 
 ```bash
-# Supabase
-NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_ROLE_KEY=
-
-# AI Extraction
-ANTHROPIC_API_KEY=               # Claude Haiku + Opus
-HF_TOKEN=                        # HuggingFace — enables Qwen3-VL-8B parallel extractor
-MISTRAL_API_KEY=                 # Mistral — enables Mistral OCR 3 handwriting transcript
-
-# OCR engines
-GOOGLE_CLOUD_VISION_API_KEY=     # Google Vision word-level OCR
-OCR_SPACE_API_KEY=               # OCR.space free key (K83177836788957)
-
-# App
-NEXT_PUBLIC_TECHNICIAN_PHONE=    # Phone number on Template A infographic
-
-# Email alerts (Resend)
-RESEND_API_KEY=
-RESEND_SANDBOX=true              # Set false for production email
-RESEND_DOMAIN=                   # Your verified Resend domain (production only)
-CRON_SECRET=                     # Vercel cron Authorization header
+git clone https://github.com/jacmani/tw-water-automation
+cd tw-water-automation
+npm install
 ```
 
-All set in Vercel dashboard → Settings → Environment Variables.
+### 2. Environment variables
+
+Copy `.env.example` to `.env.local` and fill in all values:
+
+```bash
+cp .env.example .env.local
+```
+
+| Variable | Where to get it |
+|----------|----------------|
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase → Settings → API |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase → Settings → API |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase → Settings → API (service role) |
+| `ANTHROPIC_API_KEY` | console.anthropic.com |
+| `HF_TOKEN` | huggingface.co/settings/tokens (free account, read scope) |
+| `MISTRAL_API_KEY` | console.mistral.ai |
+| `GOOGLE_CLOUD_VISION_API_KEY` | Google Cloud Console → Vision API |
+| `OCR_SPACE_API_KEY` | ocr.space/ocrapi (free key sufficient) |
+| `NEXT_PUBLIC_TECHNICIAN_PHONE` | Phone number shown on Template A infographic |
+| `RESEND_API_KEY` | resend.com → API Keys |
+| `RESEND_SANDBOX` | `true` (sandbox) or `false` (production) |
+| `RESEND_DOMAIN` | Verified Resend domain (production only) |
+| `CRON_SECRET` | Random secret — set same value in Vercel dashboard |
+
+### 3. Supabase setup
+
+1. Create a new [Supabase](https://supabase.com) project
+2. In the SQL editor, run migrations in order:
+   - `supabase/migrations/001_initial_schema.sql`
+   - `supabase/migrations/002_committee_and_dedup.sql`
+   - `supabase/migrations/003_alert_log.sql`
+3. In **Storage**, create a bucket named `sheet-images` set to **Public**
+
+### 4. Run locally
+
+```bash
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000)
 
 ---
 
-## Tower Colors
+## Deploy to Vercel
 
-| Tower | Color | Hex |
-|-------|-------|-----|
-| Venus | Purple | `#7C3AED` |
-| Mercury | Blue | `#2563EB` |
-| Neptune | Green | `#059669` |
-| Jupiter | Orange | `#EA580C` |
+1. Push to GitHub
+2. Vercel → New Project → import repo
+3. Add all env vars from step 2 in Vercel project settings
+4. Deploy — Vercel auto-deploys on every push to `main`
+5. Vercel Cron picks up `vercel.json` automatically (weekly + monthly reports)
 
-Used in infographics, dashboard cards, charts, and history heatmap. Do not change these.
+---
+
+## Project Structure
+
+```
+src/
+├── app/
+│   ├── page.tsx                        # Dashboard (server component)
+│   ├── upload/page.tsx                 # Upload form with live engine log (client component)
+│   ├── history/page.tsx                # Consumption history (client component)
+│   ├── committee/page.tsx              # Committee registry (server component)
+│   ├── committee/admin/page.tsx        # Committee admin (client component)
+│   ├── alerts/page.tsx                 # Alert log (server component)
+│   └── api/
+│       ├── upload/route.ts             # POST: image → storage → all engines → pending response
+│       ├── upload/stream/route.ts      # POST SSE: same pipeline with live log events
+│       ├── upload/confirm/route.ts     # POST: commit extraction to DB, fire spike alert
+│       └── cron/
+│           ├── weekly-report/          # Monday 08:00 IST
+│           └── monthly-report/         # 1st of month 08:00 IST
+├── components/
+│   ├── dashboard/                      # TowerCard, TrendChart, SummaryRow, ISTClock, etc.
+│   ├── history/                        # HistoryPage, DailyTable, HeatmapView, flagging, csvExport
+│   ├── committee/                      # CommitteeAdmin
+│   └── infographics/                   # TemplateA (dark navy), TemplateB (pie), TemplateC (alert)
+├── lib/
+│   ├── anthropic.ts                    # Five-engine pipeline — Haiku, Opus, sanity checks, auto-correction
+│   ├── qwenVision.ts                   # Qwen3-VL-8B via HuggingFace Router
+│   ├── mistralOcr.ts                   # Mistral OCR 3 — handwriting transcript
+│   ├── googleVision.ts                 # Google Vision word-level OCR
+│   ├── ocrSpace.ts                     # OCR.space Engine 2
+│   ├── extractionValidator.ts          # Cross-validates Claude output against OCR word lists
+│   ├── mistralVision.ts                # Legacy Mistral Small + Gemma-4 (kept, not in main pipeline)
+│   ├── email.ts                        # Resend — spike/weekly/monthly templates
+│   ├── supabase.ts                     # DB client factory
+│   └── utils.ts                        # Tower colors, formatIST(), helpers
+└── types/index.ts                      # All TypeScript types
+supabase/migrations/                    # SQL schema — run in order
+scripts/re-extract.ts                   # Re-run extraction on flagged sheets
+vercel.json                             # Cron schedules
+CLAUDE.md                               # Full project context for AI agent sessions
+```
+
+---
+
+## Five-Engine OCR Pipeline
+
+Every upload runs five AI engines in parallel to handle handwritten digit confusion (the key failure mode is a handwritten 7 with a short crossbar being read as 1 — e.g. 1,76,000 misread as 1,16,000).
+
+```
+Phase 1 — Parallel:
+  Qwen3-VL-8B       → 8 tower totals JSON    (different visual encoder to Claude)
+  Mistral OCR 3     → full sheet Markdown     (handwriting specialist, 88.9% accuracy)
+  Google Vision     → word-level tokens       (date + number corroboration)
+  OCR.space Eng 2   → word-level tokens       (free, second opinion)
+
+Phase 2 — Sequential:
+  Claude Haiku      → full sheet extraction (image + Mistral OCR transcript as context hint)
+    ├─ Qwen agrees (ratio ≥0.85) → Done. Opus not called.
+    ├─ Qwen disagrees            → Claude Opus (also gets transcript) → sanity check
+    │                               └─ Opus fails sanity → vol_today auto-correction
+    ├─ Haiku sanity violation    → Claude Opus → sanity check → auto-correct if needed
+    └─ Confidence < 0.80         → Claude Opus → sanity check
+```
+
+**Cost:** ~$0.007/upload · ~$2.55/year for 365 daily uploads.
 
 ---
 
 ## Infographic Templates
 
-Three WhatsApp-shareable portrait PNG + animated GIF exports via html-to-image at 2× pixel ratio. Generated client-side.
+| Template | Design | Trigger |
+|----------|--------|---------|
+| A — Daily Tower Card | Dark navy, per-tower, Trinity World photo background | Always (select tower) |
+| B — Pie Chart | White/blue, all towers, Recharts PieChart | Always |
+| C — Alert Poster | Red/black, aggressive design | Any tower ≥15% above 7-day avg |
 
-**Template A — Daily Tower Card:** Dark navy (`#0F172A`), one tower, today + yesterday + 7-day avg, 3 conservation tips, technician contact. Background: `public/branding/tw-3.jpg`.
-
-**Template B — Tower Wise Pie Chart:** White/light-blue, all 4 towers, Recharts PieChart, highest/lowest callout. Background: `public/branding/tw-2.jpg`.
-
-**Template C — Alert Poster:** Red/black (`#DC2626` on `#0F0F0F`), triggers when any tower ≥15% above 7-day average. Background: `public/branding/tw-4.jpg`.
-
-GIF export: 22 frames + 5 hold frames, looping, via `gif.js` Web Worker. Worker file at `public/gif.worker.js`.
+All three export as **animated GIF** (Ken Burns zoom + number count-up, 22 frames) or static **PNG** at 2× resolution, suitable for WhatsApp sharing. Background photos from `public/branding/tw-1.jpg` through `tw-8.jpg` with 78–84% dark overlay.
 
 ---
 
-## Alert Email System
+## Alerts & Reports
 
-| Type | Trigger | Recipients (production) |
-|------|---------|------------------------|
-| `spike` | Every upload — fires per tower if >15% above 7-day avg | President, Secretary, VP, GC Chairs |
-| `weekly` | Monday 08:00 IST | All active committee members |
-| `monthly` | 1st of month 08:00 IST | All active committee members |
+Emails are sent via [Resend](https://resend.com). Currently in **sandbox mode** — all emails route to `jacmani@gmail.com` regardless of intended recipient. Set `RESEND_SANDBOX=false` and add a verified Resend domain to enable production routing to committee members.
 
-**Sandbox → Production switch:** Set `RESEND_SANDBOX=false` in Vercel. Production prerequisites: verify domain in Resend, set `RESEND_DOMAIN`, add emails to `committee_members.email`.
+| Alert type | Trigger | Recipients (production) |
+|------------|---------|------------------------|
+| Spike alert | Every upload — fires per tower if >15% above 7-day avg | President, VP, Secretary, GC Chairs |
+| Weekly report | Mondays 08:00 IST (`30 2 * * 1`) | All active committee members |
+| Monthly report | 1st of month 08:00 IST (`30 2 1 * *`) | All active committee members |
 
-Every send (success or error) logged in `alert_log` regardless of sandbox/production mode.
-
----
-
-## History Page Flagging Logic
-
-`src/components/history/flagging.ts` — computed live, not stored. Each processed sheet gets one flag:
-
-| Priority | Flag | Trigger |
-|----------|------|---------|
-| 1 | `summary_misread` | `input_total` or `tower_usage` null, OR `input_total > WS_sum × 1.5` |
-| 2 | `digit_drop` | Any DO < 50,000 L or DR < 5,000 L when other rows of same type are normal |
-| 3 | `source_duplication` | Duplicate non-zero values in `water_sources.total` AND `WS_sum > input_total × 1.1` |
-| 4 | `unexplained_gap` | `abs(TC_sum − tower_usage) > 10,000 L` or `abs(WS_sum − input_total) > 10,000 L` |
-| 5 | `ok` | All sums within ±10 kL tolerance |
-
-Low-confidence rows (`confidence < 0.8`) shown italic/dimmed with ⚠ superscript in history table.
+Every send (success or error) is logged in `alert_log` and visible at `/alerts`. Cron jobs are compatible with the Vercel Hobby plan (max once per day).
 
 ---
 
-## Supabase Storage
+## History Page
 
-Bucket: `sheet-images` (public bucket). Images stored as `{date}-{timestamp}.{ext}`. URLs stored in `daily_sheets.image_url`.
+`/history` shows the full extraction record for any date range with:
 
----
+- **Daily Table** — one expandable row per sheet. Collapsed: date, input total, tower usage, diff, flag badge, date source badge (AI/Manual). Expanded: raw source readings + per-tower DO/DR values with confidence indicators (low-confidence values shown italic + ⚠).
+- **Heatmap** — GitHub-style calendar. Community mode (total deviation from mean) or Per Tower mode (4 independent heatmaps). Blue = below average, orange/red = above average.
+- **Tower filter** — narrows heatmap and highlights expanded tower rows.
+- **CSV export** — client-side, one row per date, all source/tower/confidence columns.
 
-## Supabase Migrations (run in order in SQL editor)
+**Cross-check flags** (computed live, not stored):
 
-| File | Contents |
+| Flag | Trigger |
 |------|---------|
-| `001_initial_schema.sql` | Initial 6 tables |
-| `002_committee_and_dedup.sql` | `superseded` column, dedup CTE, `committee_members`, seeds 2026-27 term |
-| `003_alert_log.sql` | `alert_log` table |
-
-Migration 002 must be applied before deploying code referencing `superseded` or `committee_members`. Migration 003 before email alerts work.
-
----
-
-## Re-Extract Script
-
-Re-run extraction on flagged sheets using the current hardened prompt.
-
-```bash
-# Dry run — shows old vs new values, does not write to DB
-npx ts-node --project tsconfig.json scripts/re-extract.ts
-
-# Commit — deletes child records and re-inserts fresh extraction
-npx ts-node --project tsconfig.json scripts/re-extract.ts --commit
-```
-
-Requires `.env.local` with Supabase + Anthropic keys. Does NOT use `@/*` path aliases.
+| `summary_misread` | `input_total` or `tower_usage` is null, or input_total >> WS sum |
+| `digit_drop` | A DO row < 50 kL or DR row < 5 kL when peers are in normal range |
+| `source_duplication` | Duplicate non-zero source totals and WS sum inflated vs input_total |
+| `unexplained_gap` | TC sum or WS sum differs from recorded value by > 10 kL |
+| `ok` | All sums within ±10 kL |
 
 ---
 
-## Deployment
+## Data Model
 
-Push to `main` → Vercel auto-deploys. Environment variables in Vercel dashboard.
+Eight tables in Postgres. Full field specs in `CLAUDE.md`.
 
-**When git index.lock blocks CLI pushes** (common in sandbox), use the GitHub Contents API:
-```bash
-git remote set-url origin https://<PAT>@github.com/jacmani/tw-water-automation.git && git push origin main
-```
+| Table | Holds |
+|-------|-------|
+| `daily_sheets` | One row per upload — date, image URL, status, confidence, date_source, superseded flag |
+| `tower_consumption` | DO + DR readings per tower per sheet (8 rows/sheet) |
+| `water_sources` | Section 2 source/location rows per sheet |
+| `water_levels` | Tank CM/% readings at 6AM, 12PM, 6PM, 12AM per sheet (24 rows/sheet) |
+| `amenities` | Car Wash, Pool, Party Hall meter readings per sheet |
+| `summary` | Section 6 totals — input, tower usage, diff per sheet |
+| `committee_members` | Term-scoped registry of 10 committee roles with email/WhatsApp opt-in |
+| `alert_log` | Every Resend email attempt — type, recipients, status, Resend ID |
+
+**Deduplication:** Multiple uploads for the same date are allowed. The most recently created is canonical (`superseded=false`). All queries filter `.eq('superseded', false)`.
+
+---
+
+## What Comes Next
+
+- **Production email** — domain verification in Resend, flip `RESEND_SANDBOX=false`
+- **Association member login** — Supabase Auth, role-based dashboard access for GC Chairs
+- **Historical trend reports** — month-over-month, anomaly history, export to PDF
+- **Resident portal integration** — single login, per-flat consumption insights
+- **Automated daily reminder** — if no upload by 9AM, ping technician via SMS/WhatsApp Business API
 
 ---
 
 ## Version History
 
-### v2.0.0 — Multi-Engine OCR AI Architecture (June 2026)
-- **Five-engine parallel pipeline:** Qwen3-VL-8B + Mistral OCR 3 + Google Vision + OCR.space + Claude Haiku/Opus
-- **Mistral OCR 3 context injection:** Haiku reads image + structured handwriting transcript simultaneously
-- **Qwen3-VL cross-validation:** Architecturally different visual encoder; disagreement triggers Opus
-- **Sanity checks on Opus escalation path:** Both Haiku AND Opus run sanity — if both fail, `vol_today` auto-corrects `total_ltrs` at confidence 0.65
-- **Live SSE log on upload page:** Real-time per-engine status, elapsed ms, confidence
-- **Verified result:** Mercury DO 1,76,000 (recurring digit confusion bug) correctly extracted on first upload without any manual DB patch
+**v2.0.0 — Multi-Engine OCR AI Architecture (June 2026)**
+Five-engine parallel pipeline (Qwen3-VL-8B + Mistral OCR 3 + Google Vision + OCR.space + Claude Haiku/Opus). Mistral OCR 3 transcript injected into Haiku context. Sanity checks on Opus escalation path. `vol_today` auto-correction when both models fail. Live SSE terminal log on upload page. Mercury digit confusion bug resolved on first upload without manual DB patch.
 
-### v1.3.0 — Haiku + Prompt Caching + Google Vision
-- Switched primary extractor from Opus to Haiku (cost: ~10× cheaper per upload)
-- Prompt caching on system prompt via Anthropic beta
-- Google Vision DOCUMENT_TEXT_DETECTION for word-level corroboration
-- `extractionValidator.ts` cross-validation layer
-- Raised Haiku→Opus confidence threshold from 0.70 to 0.80
+**v1.3.0 — Haiku + Prompt Caching + Google Vision**
+Switched primary extractor from Opus to Haiku. Added prompt caching. Google Vision word-level OCR + extractionValidator cross-validation layer. Raised confidence threshold to 0.80.
 
-### v1.2.0 — OCR.space + Mistral Small (legacy)
-- OCR.space Engine 2 integration (free tier)
-- Mistral Small as tower-totals validator (replaced by Qwen3-VL in v2.0.0)
-- Sanity ranges and violation detection
+**v1.2.0 — OCR.space + Mistral Small**
+OCR.space Engine 2 integration (free). Mistral Small as tower-totals validator (replaced by Qwen3-VL in v2.0.0). Sanity ranges and violation detection.
 
-### v1.1.0 — History, Committee, Alerts, Infographics
-- `/history` page: heatmap, cross-check flags, CSV export, dark/light mode
-- Committee registry + admin: `/committee`, `/committee/admin`, term lifecycle
-- Three infographic templates (A/B/C) with animated GIF export
-- Alert email system (Resend): spike, weekly, monthly cron reports
-- `/alerts` admin page for send history
+**v1.1.0 — History, Committee, Alerts, Infographics**
+`/history` with heatmap, flags, CSV export, dark/light mode. Committee registry + admin with term lifecycle. Three infographic templates with animated GIF export. Alert email system — spike, weekly, monthly. `/alerts` admin page.
 
-### v1.0.0 — Initial Release
-- Upload page + Claude Vision extraction
-- Supabase schema (6 tables)
-- Dashboard: tower cards, 7-day trend, missing sheet alert
-- Vercel deployment, GitHub Actions
+**v1.0.0 — Initial Release**
+Upload page, Claude Vision extraction, Supabase schema, dashboard, Vercel deployment.
 
 ---
 
-## What Is NOT Built (v3 Backlog)
+---
 
-- WhatsApp bot
-- Technician login / auth (no auth in v1 by design — reduces adoption friction)
-- Per-flat consumption tracking
-- Digital form entry
-- Mobile app
-- Association member login + GC Chair dashboard role
-- Historical trend reports (month-over-month, PDF export)
-- Anomaly detection + push alerts
-- Automated daily reminder if no upload by 9AM (SMS/WhatsApp Business API)
+## For AI Agents Working on This Codebase
+
+Read this section after reading the rest of the file. The sections above give you the full picture of what the system does and how it works. The notes below cover operational constraints specific to working in an AI agent session.
+
+### Critical invariants — do not break these
+
+- **`superseded` column** — always filter `.eq('superseded', false)` when querying `daily_sheets` for dashboards, trends, or averages. Never omit this filter.
+- **Tower colors** — Venus `#7C3AED`, Mercury `#2563EB`, Neptune `#059669`, Jupiter `#EA580C`. Used in infographics, cards, charts, heatmap. Do not change.
+- **`RESEND_SANDBOX`** — must stay `true` unless the user explicitly instructs otherwise.
+- **Do not rename** the Vercel project, GitHub repo, or Supabase project. URLs are hardcoded in Resend templates and committee communications.
+- **`mistralVision.ts`** exists but is NOT called in the main pipeline. It is legacy code. Do not wire it back in.
+
+### Git push method
+
+The local git index.lock is stale in the sandbox — `git push` will fail. Always use the GitHub Contents API (PUT) with the PAT in this file's sister document `CLAUDE.md`. Fetch the current SHA for each file before pushing.
+
+### The most important file
+
+`src/lib/anthropic.ts` — the entire five-engine pipeline lives here. Before editing it, understand the three escalation paths (Qwen disagreement, sanity violation, low confidence) and the `applyCorrections()` auto-correction logic. The sanity check must run on the Opus result too, not just Haiku.
+
+### Supabase migrations
+
+Run manually in the Supabase SQL editor. Never auto-migrate. Migration 002 must exist before any code referencing `superseded` or `committee_members` is deployed. Migration 003 before email alerts work.
+
+### Environment variable checklist
+
+If a feature isn't working, check these first: `HF_TOKEN` (Qwen3-VL), `MISTRAL_API_KEY` (Mistral OCR 3), `GOOGLE_CLOUD_VISION_API_KEY` (Google Vision), `OCR_SPACE_API_KEY` (OCR.space). All four are optional — missing keys cause that engine to silently skip; the pipeline degrades gracefully but loses the cross-validation benefit.
