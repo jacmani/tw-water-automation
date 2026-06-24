@@ -69,11 +69,32 @@ CRITICAL: The "IN PUT total" is a TOTAL row. Its value is always larger than any
 individual source row above it. Never place the input_total value into v_side,
 n_side, jtr_tanker, or mtr_tanker. Read the label text on each row explicitly.
 
+=== INDIAN NUMBER FORMAT ===
+Numbers on this sheet are written in Indian/South Asian format with commas:
+  1,76,000 = 176,000 (one lakh seventy-six thousand)
+  1,98,000 = 198,000 (one lakh ninety-eight thousand)
+  2,54,000 = 254,000 etc.
+Always output numbers as plain integers without commas: 176000, 198000, 254000.
+
+CRITICAL HANDWRITING DISAMBIGUATION — these digit pairs are frequently confused:
+  • 1 vs 7: A handwritten "7" with a short top stroke looks like "1". If a DO total
+    reads ~116,000 but the row's r_today and r_yesterday suggest higher consumption,
+    re-examine whether the second digit is "7" not "1" → i.e. 176,000.
+  • 1 vs 7 in Indian format: "1,16,000" may actually be "1,76,000" = 176,000.
+  • 6 vs 0: handwritten "0" with a tail looks like "6".
+  • 3 vs 8: an open-top "8" can look like "3".
+When in doubt between two readings, prefer the one that falls within the expected
+sanity range AND is consistent with meter reading delta (r_today − r_yesterday).
+
 === SANITY RANGES ===
 After extracting each value, verify it falls within the expected range for that field.
 If a value is outside the range, set confidence for that field to 0.6 and add
 "fieldname: out_of_range (value)" to flagged_fields. Never set the value to null
 or 0 just because it is out of range — report what you actually read.
+
+Additionally: for Tower DO rows, verify that total_ltrs ≈ (r_today − r_yesterday)
+or ≈ vol_today. If total_ltrs is more than 50% different from what the meter delta
+implies, re-read the total_ltrs cell — it is likely a digit misread.
 
 Expected ranges:
   Tower section total_ltrs (DO rows): 50,000 – 250,000 L
@@ -219,7 +240,7 @@ async function runExtraction(
 /**
  * Structural sanity check that catches Haiku falsely-high-confidence misreads.
  * Returns true if the result contains values that are physically impossible
- * for this sheet type, regardless of reported confidence.
+ * or internally inconsistent for this sheet type.
  */
 function hasSanityViolation(result: ExtractionResult): boolean {
   const towers = result.tower_section;
@@ -227,6 +248,7 @@ function hasSanityViolation(result: ExtractionResult): boolean {
   for (const tower of ['Venus', 'Mercury', 'Neptune', 'Jupiter'] as const) {
     const t = towers[tower];
     if (!t) continue;
+
     // DR total_ltrs > 80,000 L is impossible (sanity range max is 40,000)
     if (t.DR?.total_ltrs != null && t.DR.total_ltrs > 80_000) {
       console.warn(`[extraction] sanity violation: ${tower} DR total_ltrs=${t.DR.total_ltrs} (max 40,000)`);
@@ -236,6 +258,18 @@ function hasSanityViolation(result: ExtractionResult): boolean {
     if (t.DO?.total_ltrs != null && t.DO.total_ltrs > 300_000) {
       console.warn(`[extraction] sanity violation: ${tower} DO total_ltrs=${t.DO.total_ltrs} (max 250,000)`);
       return true;
+    }
+
+    // Cross-check: total_ltrs should roughly match vol_today if both are present.
+    // A >60% mismatch between them suggests a digit misread in one.
+    const doTotal = t.DO?.total_ltrs;
+    const doVolToday = t.DO?.vol_today;
+    if (doTotal != null && doVolToday != null && doVolToday > 0) {
+      const ratio = doTotal / doVolToday;
+      if (ratio < 0.4 || ratio > 2.5) {
+        console.warn(`[extraction] sanity violation: ${tower} DO total_ltrs=${doTotal} vs vol_today=${doVolToday} (ratio=${ratio.toFixed(2)})`);
+        return true;
+      }
     }
   }
   return false;
