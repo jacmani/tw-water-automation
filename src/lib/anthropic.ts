@@ -266,7 +266,7 @@ function hasSanityViolation(result: ExtractionResult): boolean {
     const doVolToday = t.DO?.vol_today;
     if (doTotal != null && doVolToday != null && doVolToday > 0) {
       const ratio = doTotal / doVolToday;
-      if (ratio < 0.4 || ratio > 2.5) {
+      if (ratio < 0.6 || ratio > 1.8) {
         console.warn(`[extraction] sanity violation: ${tower} DO total_ltrs=${doTotal} vs vol_today=${doVolToday} (ratio=${ratio.toFixed(2)})`);
         return true;
       }
