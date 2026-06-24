@@ -1,4 +1,3 @@
-import Link from 'next/link';
 import { getMostRecentSheet, wasSheetUploadedToday, getTowerConsumptionForSheet, getSummaryForSheet, getTowerTrend, getMostRecentLogDate, getDashboardLogbookData } from '@/lib/supabase';
 import { TOWERS, formatMediumDate } from '@/lib/utils';
 import TowerCard from '@/components/dashboard/TowerCard';
@@ -10,7 +9,7 @@ import ISTClock from '@/components/dashboard/ISTClock';
 import InflowSummaryPanel from '@/components/dashboard/InflowSummaryPanel';
 import WaterLevelsPanel from '@/components/dashboard/WaterLevelsPanel';
 import AmenitiesPanel from '@/components/dashboard/AmenitiesPanel';
-import ThemeToggle from '@/components/ThemeToggle';
+import Navbar from '@/components/Navbar';
 import type { DashboardData, TrendChartPoint } from '@/types';
 
 export const revalidate = 60;
@@ -102,47 +101,11 @@ export default async function Dashboard() {
 
   return (
     <main className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white">
-      <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-4 sticky top-0 z-10">
-        <div className="max-w-4xl mx-auto flex items-center justify-between gap-4">
-          <div>
-            <h1 className="text-lg font-bold text-slate-900 dark:text-white leading-tight">Trinity World Water Consumption</h1>
-          </div>
-          <ISTClock />
-          <div className="flex items-center gap-2">
-            <ThemeToggle />
-            <Link
-              href="/logbook"
-              className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white text-sm font-medium px-3 py-2 rounded-lg transition-colors"
-            >
-              Log Book
-            </Link>
-            <Link
-              href="/history"
-              className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white text-sm font-medium px-3 py-2 rounded-lg transition-colors"
-            >
-              History
-            </Link>
-            <Link
-              href="/alerts"
-              className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white text-sm font-medium px-3 py-2 rounded-lg transition-colors"
-            >
-              Alerts
-            </Link>
-            <Link
-              href="/committee"
-              className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white text-sm font-medium px-3 py-2 rounded-lg transition-colors"
-            >
-              Committee
-            </Link>
-            <Link
-              href="/upload"
-              className="bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
-            >
-              Upload Sheet
-            </Link>
-          </div>
-        </div>
-      </header>
+      <Navbar />
+      <div className="max-w-4xl mx-auto px-4 pt-4 pb-2 flex items-center justify-between">
+        <h1 className="text-base font-semibold text-slate-700 dark:text-slate-300">Dashboard</h1>
+        <ISTClock />
+      </div>
 
       <div className="max-w-4xl mx-auto px-4 py-5 space-y-6">
         <MissingSheetAlert hasSheet={hasTodaySheet} />
