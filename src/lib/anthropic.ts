@@ -275,19 +275,74 @@ function hasSanityViolation(result: ExtractionResult): boolean {
   return false;
 }
 
+import type { MistralVisionResult } from './mistralVision';
+
+/**
+ * Compare Haiku tower totals against Mistral's independent reading.
+ * Returns list of towers where they disagree by >15% — these are likely misreads.
+ * Tolerance is generous (15%) to avoid false positives from minor digit variance.
+ */
+function findMistralDisagreements(
+  haiku: ExtractionResult,
+  mistral: MistralVisionResult
+): string[] {
+  if (!mistral.success || mistral.readings.length === 0) return [];
+
+  const disagreements: string[] = [];
+  for (const mr of mistral.readings) {
+    if (mr.total_ltrs === null) continue;
+    const haikuVal = haiku.tower_section?.[mr.tower]?.[mr.type]?.total_ltrs;
+    if (haikuVal === null || haikuVal === undefined) continue;
+
+    const ratio = Math.min(haikuVal, mr.total_ltrs) / Math.max(haikuVal, mr.total_ltrs);
+    if (ratio < 0.85) {
+      // >15% difference — they disagree
+      disagreements.push(`${mr.tower} ${mr.type}: haiku=${haikuVal} mistral=${mr.total_ltrs}`);
+      console.warn(`[extraction] Haiku/Mistral disagreement: ${mr.tower} ${mr.type} haiku=${haikuVal} mistral=${mr.total_ltrs} (ratio=${ratio.toFixed(2)})`);
+    }
+  }
+  return disagreements;
+}
+
 export async function extractSheetData(
   base64Image: string,
-  mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif'
+  mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
+  mistralResult?: MistralVisionResult
 ): Promise<ExtractionResult> {
   const result = await runExtraction(base64Image, mediaType, PRIMARY_MODEL);
   console.log(`[extraction] model=${PRIMARY_MODEL} confidence=${result.overall_confidence}`);
 
-  const needsFallback = result.overall_confidence < CONFIDENCE_THRESHOLD || hasSanityViolation(result);
-  if (needsFallback) {
-    const reason = result.overall_confidence < CONFIDENCE_THRESHOLD ? 'low confidence' : 'sanity violation';
-    console.log(`[extraction] ${reason}, retrying with ${FALLBACK_MODEL}`);
+  // Check 1: hard sanity violations (impossible values)
+  if (hasSanityViolation(result)) {
+    console.log(`[extraction] sanity violation → escalating to ${FALLBACK_MODEL}`);
     const fallback = await runExtraction(base64Image, mediaType, FALLBACK_MODEL);
     console.log(`[extraction] model=${FALLBACK_MODEL} confidence=${fallback.overall_confidence}`);
+    fallback.flagged_fields = [...(fallback.flagged_fields ?? []), 'opus_reason:sanity_violation'];
+    return fallback;
+  }
+
+  // Check 2: Mistral disagrees with Haiku on tower totals
+  if (mistralResult) {
+    const disagreements = findMistralDisagreements(result, mistralResult);
+    if (disagreements.length > 0) {
+      console.log(`[extraction] Mistral/Haiku disagreement on ${disagreements.length} field(s) → escalating to ${FALLBACK_MODEL}`);
+      const fallback = await runExtraction(base64Image, mediaType, FALLBACK_MODEL);
+      console.log(`[extraction] model=${FALLBACK_MODEL} confidence=${fallback.overall_confidence}`);
+      fallback.flagged_fields = [
+        ...(fallback.flagged_fields ?? []),
+        `opus_reason:mistral_disagreement(${disagreements.join('; ')})`,
+      ];
+      return fallback;
+    }
+    console.log('[extraction] Mistral agrees with Haiku — Opus not needed');
+  }
+
+  // Check 3: low confidence (last resort — Mistral absent or edge case)
+  if (result.overall_confidence < CONFIDENCE_THRESHOLD) {
+    console.log(`[extraction] low confidence (${result.overall_confidence}) → escalating to ${FALLBACK_MODEL}`);
+    const fallback = await runExtraction(base64Image, mediaType, FALLBACK_MODEL);
+    console.log(`[extraction] model=${FALLBACK_MODEL} confidence=${fallback.overall_confidence}`);
+    fallback.flagged_fields = [...(fallback.flagged_fields ?? []), 'opus_reason:low_confidence'];
     return fallback;
   }
 
