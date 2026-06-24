@@ -309,77 +309,102 @@ function applyCorrections(result: ExtractionResult, corrections: SanityReport['c
   return result;
 }
 
-import type { MistralVisionResult } from './mistralVision';
+import type { QwenVisionResult } from './qwenVision';
 
 /**
- * Compare primary-model tower totals against Mistral's independent reading.
- * Returns list of disagreements where models differ by >15%.
+ * Compare Haiku tower totals against Qwen3-VL's independent reading.
+ * Both ran on the same image with different model architectures and different visual
+ * encoders — so disagreements are genuine signals of a misread, not model noise.
+ * Tolerance: 15% (ratio < 0.85). Returns list of disagreeing fields.
  */
-function findMistralDisagreements(
-  primary: ExtractionResult,
-  mistral: MistralVisionResult
+function findQwenDisagreements(
+  haiku: ExtractionResult,
+  qwen: QwenVisionResult
 ): string[] {
-  if (!mistral.success || mistral.readings.length === 0) return [];
+  if (!qwen.success || qwen.readings.length === 0) return [];
 
   const disagreements: string[] = [];
-  for (const mr of mistral.readings) {
-    if (mr.total_ltrs === null) continue;
-    const primaryVal = primary.tower_section?.[mr.tower]?.[mr.type]?.total_ltrs;
-    if (primaryVal === null || primaryVal === undefined) continue;
+  for (const qr of qwen.readings) {
+    if (qr.total_ltrs === null) continue;
+    const haikuVal = haiku.tower_section?.[qr.tower]?.[qr.type]?.total_ltrs;
+    if (haikuVal === null || haikuVal === undefined) continue;
 
-    const ratio = Math.min(primaryVal, mr.total_ltrs) / Math.max(primaryVal, mr.total_ltrs);
+    const ratio = Math.min(haikuVal, qr.total_ltrs) / Math.max(haikuVal, qr.total_ltrs);
     if (ratio < 0.85) {
-      disagreements.push(`${mr.tower} ${mr.type}: primary=${primaryVal} mistral=${mr.total_ltrs}`);
-      console.warn(`[extraction] disagreement: ${mr.tower} ${mr.type} primary=${primaryVal} mistral=${mr.total_ltrs} ratio=${ratio.toFixed(2)}`);
+      disagreements.push(`${qr.tower} ${qr.type}: haiku=${haikuVal} qwen=${qr.total_ltrs}`);
+      console.warn(`[extraction] Haiku/Qwen3-VL disagree: ${qr.tower} ${qr.type} haiku=${haikuVal} qwen=${qr.total_ltrs} ratio=${ratio.toFixed(2)}`);
     }
   }
   return disagreements;
 }
 
+/**
+ * Main extraction entry point.
+ *
+ * Pipeline (all parallel I/O where possible):
+ *   Phase 1 (parallel, called by upload route):
+ *     - Qwen3-VL-8B (HF router)  ← full parallel extractor, cheap, OCR-optimised
+ *     - Google Vision             ← word-level OCR for date/number corroboration
+ *     - OCR.space Engine 2        ← second OCR engine
+ *
+ *   Phase 2 (this function):
+ *     - Claude Haiku (primary full extractor)
+ *     - Compare Haiku vs Qwen3-VL tower totals
+ *       → agree (ratio ≥0.85 on all rows): accept Haiku result
+ *       → disagree: escalate to Opus, run sanity on Opus, auto-correct if needed
+ *     - Fallback sanity check (catches cases where Qwen was absent)
+ *     - Low-confidence escalation (last resort)
+ */
 export async function extractSheetData(
   base64Image: string,
   mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
-  mistralResult?: MistralVisionResult
+  qwenResult?: QwenVisionResult
 ): Promise<ExtractionResult> {
   const result = await runExtraction(base64Image, mediaType, PRIMARY_MODEL);
   console.log(`[extraction] Haiku confidence=${result.overall_confidence}`);
 
-  // ── Check 1: Mistral disagrees with Haiku ───────────────────────────────────
-  // Do this FIRST — cheaper than Opus and catches the 1vs7 digit confusion reliably.
-  if (mistralResult) {
-    const disagreements = findMistralDisagreements(result, mistralResult);
+  // ── Check 1: Qwen3-VL disagrees with Haiku ──────────────────────────────────
+  // This is the primary guard against digit misreads (1 vs 7, etc).
+  // Two models with different architectures reading the same handwritten digit
+  // independently — agreement = very high confidence in the reading.
+  if (qwenResult) {
+    const disagreements = findQwenDisagreements(result, qwenResult);
     if (disagreements.length > 0) {
-      console.log(`[extraction] Mistral/Haiku disagree on ${disagreements.length} field(s) → Opus`);
+      console.log(`[extraction] Haiku/Qwen3-VL disagree on ${disagreements.length} field(s) → Opus`);
       const opusResult = await runExtraction(base64Image, mediaType, FALLBACK_MODEL);
       console.log(`[extraction] Opus confidence=${opusResult.overall_confidence}`);
 
-      // Also run sanity on Opus result — if Opus ALSO fails, auto-correct from vol_today
+      // Run sanity on Opus too — both Haiku AND Opus can share the same misread
       const opusSanity = checkSanity(opusResult);
       if (opusSanity.violated && opusSanity.corrections.length > 0) {
-        console.warn(`[extraction] Opus also failed sanity — applying vol_today corrections`);
+        console.warn(`[extraction] Opus also failed sanity → auto-correcting from vol_today`);
         applyCorrections(opusResult, opusSanity.corrections);
+        opusResult.flagged_fields = [
+          ...(opusResult.flagged_fields ?? []),
+          `opus_reason:qwen_disagreement(${disagreements.join('; ')})`,
+          'warning:opus_also_failed_sanity_auto_corrected_from_vol_today',
+        ];
+      } else {
+        opusResult.flagged_fields = [
+          ...(opusResult.flagged_fields ?? []),
+          `opus_reason:qwen_disagreement(${disagreements.join('; ')})`,
+        ];
       }
-
-      opusResult.flagged_fields = [
-        ...(opusResult.flagged_fields ?? []),
-        `opus_reason:mistral_disagreement(${disagreements.join('; ')})`,
-      ];
       return opusResult;
     }
-    console.log('[extraction] Mistral agrees with Haiku — skipping Opus');
+    console.log('[extraction] Qwen3-VL agrees with Haiku — Opus not needed');
   }
 
-  // ── Check 2: hard sanity violations on Haiku result ─────────────────────────
+  // ── Check 2: sanity check on Haiku result (catches cases Qwen was absent) ───
   const haikuSanity = checkSanity(result);
   if (haikuSanity.violated) {
     console.log(`[extraction] Haiku sanity violation → Opus`);
     const opusResult = await runExtraction(base64Image, mediaType, FALLBACK_MODEL);
     console.log(`[extraction] Opus confidence=${opusResult.overall_confidence}`);
 
-    // Run sanity on Opus too — this is the critical fix for the Mercury repeat bug
     const opusSanity = checkSanity(opusResult);
     if (opusSanity.violated && opusSanity.corrections.length > 0) {
-      console.warn(`[extraction] Opus ALSO failed sanity — applying vol_today auto-corrections`);
+      console.warn(`[extraction] Opus ALSO failed sanity → auto-correcting from vol_today`);
       applyCorrections(opusResult, opusSanity.corrections);
       opusResult.flagged_fields = [
         ...(opusResult.flagged_fields ?? []),
@@ -402,7 +427,6 @@ export async function extractSheetData(
     if (opusSanity.violated && opusSanity.corrections.length > 0) {
       applyCorrections(opusResult, opusSanity.corrections);
     }
-
     opusResult.flagged_fields = [...(opusResult.flagged_fields ?? []), 'opus_reason:low_confidence'];
     return opusResult;
   }
