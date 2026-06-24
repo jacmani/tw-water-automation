@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import Link from 'next/link';
+import Navbar from '@/components/Navbar';
 import { createClient } from '@supabase/supabase-js';
 import type { TowerName } from '@/types';
 import { TOWER_COLORS } from '@/lib/utils';
@@ -100,19 +100,13 @@ export default function HistoryPage() {
 
   return (
     <main className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white">
-      <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-4 sticky top-0 z-10">
-        <div className="max-w-5xl mx-auto flex items-center justify-between gap-4">
-          <div>
-            <h1 className="text-lg font-bold text-slate-900 dark:text-white leading-tight">Consumption History</h1>
-            <p className="text-slate-500 dark:text-slate-400 text-xs mt-0.5">Full extraction record with cross-checks</p>
-          </div>
-          <Link href="/" className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white text-sm font-medium px-3 py-2 rounded-lg transition-colors">
-            ← Dashboard
-          </Link>
-        </div>
-      </header>
+      <Navbar />
+      <div className="max-w-5xl mx-auto px-4 pt-4 pb-1">
+        <h1 className="text-base font-semibold text-slate-700 dark:text-slate-300">Consumption History</h1>
+        <p className="text-slate-500 dark:text-slate-400 text-xs mt-0.5">Full extraction record with cross-checks</p>
+      </div>
 
-      <div className="max-w-5xl mx-auto px-4 py-5 space-y-5">
+      <div className="max-w-5xl mx-auto px-4 py-4 space-y-5">
         {/* Controls */}
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-3">
           <div className="flex flex-wrap items-center gap-3 justify-between">
