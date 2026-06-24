@@ -3,6 +3,7 @@ import { createServerClient } from '@/lib/supabase';
 import { extractSheetData } from '@/lib/anthropic';
 import { extractTextFromImage } from '@/lib/googleVision';
 import { extractTextWithOcrSpace } from '@/lib/ocrSpace';
+import { extractTowerTotalsWithMistral } from '@/lib/mistralVision';
 import { validateExtraction } from '@/lib/extractionValidator';
 
 const DATE_CONFIDENCE_THRESHOLD = 0.8;
@@ -59,12 +60,15 @@ export async function POST(request: NextRequest) {
   let visionValidated = false;
   try {
     const base64 = buffer.toString('base64');
-    // Run Claude + both OCR engines in parallel for maximum speed
-    const [claudeResult, visionResult, ocrSpaceResult] = await Promise.all([
-      extractSheetData(base64, mediaType),
+    // Phase 1: run Mistral + both OCR engines in parallel (no Opus yet)
+    const [mistralResult, visionResult, ocrSpaceResult] = await Promise.all([
+      extractTowerTotalsWithMistral(base64, mediaType),
       extractTextFromImage(base64),
       extractTextWithOcrSpace(base64, mediaType),
     ]);
+
+    // Phase 2: run Haiku, passing Mistral result so it can trigger Opus if needed
+    const claudeResult = await extractSheetData(base64, mediaType, mistralResult);
     extracted = claudeResult;
 
     const validation = validateExtraction(extracted, visionResult, ocrSpaceResult);
