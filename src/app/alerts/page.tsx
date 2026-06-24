@@ -1,4 +1,4 @@
-import Link from 'next/link';
+import Navbar from '@/components/Navbar';
 import { createServerClient } from '@/lib/supabase';
 import { formatMediumDate, formatIST } from '@/lib/utils';
 
@@ -57,29 +57,20 @@ export default async function AlertsPage() {
 
   return (
     <main className="min-h-screen bg-slate-950 text-white">
-      <header className="bg-slate-900 border-b border-slate-800 px-4 py-4 sticky top-0 z-10">
-        <div className="max-w-4xl mx-auto flex items-center justify-between">
-          <div>
-            <h1 className="text-lg font-bold text-white leading-tight">Alert Log</h1>
-            <p className="text-slate-400 text-xs mt-0.5">Email send history</p>
-          </div>
-          <div className="flex items-center gap-2">
-            {isSandbox && (
-              <span className="bg-amber-900/40 border border-amber-700/50 text-amber-400 text-xs font-semibold px-2 py-1 rounded">
-                Sandbox mode
-              </span>
-            )}
-            <Link
-              href="/"
-              className="text-slate-400 hover:text-white text-sm font-medium px-3 py-2 rounded-lg transition-colors"
-            >
-              ← Dashboard
-            </Link>
-          </div>
+      <Navbar />
+      <div className="max-w-4xl mx-auto px-4 pt-4 pb-1 flex items-center gap-3">
+        <div>
+          <h1 className="text-base font-semibold text-slate-300">Alert Log</h1>
+          <p className="text-slate-500 text-xs mt-0.5">Email send history</p>
         </div>
-      </header>
+        {isSandbox && (
+          <span className="ml-auto bg-amber-900/40 border border-amber-700/50 text-amber-400 text-xs font-semibold px-2 py-1 rounded">
+            Sandbox mode
+          </span>
+        )}
+      </div>
 
-      <div className="max-w-4xl mx-auto px-4 py-5">
+      <div className="max-w-4xl mx-auto px-4 py-4">
         {isSandbox && (
           <div className="bg-amber-950/30 border border-amber-700/40 rounded-xl p-4 mb-5">
             <p className="text-amber-400 text-sm font-semibold">Resend sandbox mode active</p>
