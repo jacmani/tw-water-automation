@@ -237,53 +237,86 @@ async function runExtraction(
   return parsed;
 }
 
+interface SanityReport {
+  violated: boolean;
+  /** Fields that can be auto-corrected: tower → corrected total_ltrs */
+  corrections: Array<{ tower: string; type: 'DO' | 'DR'; correctedTotal: number; source: string }>;
+}
+
 /**
- * Structural sanity check that catches Haiku falsely-high-confidence misreads.
- * Returns true if the result contains values that are physically impossible
- * or internally inconsistent for this sheet type.
+ * Structural sanity check.
+ * Returns violated=true if any value is physically impossible or internally inconsistent.
+ * Also returns auto-corrections: when total_ltrs disagrees with vol_today by >40%,
+ * we can substitute vol_today as the corrected total (it's an independent column read).
  */
-function hasSanityViolation(result: ExtractionResult): boolean {
+function checkSanity(result: ExtractionResult): SanityReport {
   const towers = result.tower_section;
-  if (!towers) return false;
+  const corrections: SanityReport['corrections'] = [];
+  if (!towers) return { violated: false, corrections };
+
+  let violated = false;
+
   for (const tower of ['Venus', 'Mercury', 'Neptune', 'Jupiter'] as const) {
     const t = towers[tower];
     if (!t) continue;
 
-    // DR total_ltrs > 80,000 L is impossible (sanity range max is 40,000)
+    // DR total_ltrs > 80,000 L is impossible (range max is 40,000)
     if (t.DR?.total_ltrs != null && t.DR.total_ltrs > 80_000) {
-      console.warn(`[extraction] sanity violation: ${tower} DR total_ltrs=${t.DR.total_ltrs} (max 40,000)`);
-      return true;
+      console.warn(`[sanity] ${tower} DR total_ltrs=${t.DR.total_ltrs} > 80k`);
+      violated = true;
     }
-    // DO total_ltrs > 300,000 L is impossible (sanity range max is 250,000)
+    // DO total_ltrs > 300,000 L is impossible (range max is 250,000)
     if (t.DO?.total_ltrs != null && t.DO.total_ltrs > 300_000) {
-      console.warn(`[extraction] sanity violation: ${tower} DO total_ltrs=${t.DO.total_ltrs} (max 250,000)`);
-      return true;
+      console.warn(`[sanity] ${tower} DO total_ltrs=${t.DO.total_ltrs} > 300k`);
+      violated = true;
     }
 
-    // Cross-check: total_ltrs should roughly match vol_today if both are present.
-    // A >60% mismatch between them suggests a digit misread in one.
+    // DO: total_ltrs vs vol_today cross-check (they should be within 40% of each other)
     const doTotal = t.DO?.total_ltrs;
     const doVolToday = t.DO?.vol_today;
     if (doTotal != null && doVolToday != null && doVolToday > 0) {
       const ratio = doTotal / doVolToday;
       if (ratio < 0.6 || ratio > 1.8) {
-        console.warn(`[extraction] sanity violation: ${tower} DO total_ltrs=${doTotal} vs vol_today=${doVolToday} (ratio=${ratio.toFixed(2)})`);
-        return true;
+        console.warn(`[sanity] ${tower} DO total_ltrs=${doTotal} vs vol_today=${doVolToday} ratio=${ratio.toFixed(2)}`);
+        violated = true;
+        // vol_today is an independent column — use it as a correction hint
+        corrections.push({ tower, type: 'DO', correctedTotal: doVolToday, source: 'vol_today' });
       }
     }
   }
-  return false;
+
+  return { violated, corrections };
+}
+
+/**
+ * Apply auto-corrections to a result in place.
+ * Used when both Haiku AND Opus fail sanity — we substitute the independent vol_today
+ * value for total_ltrs, flag it clearly, and lower confidence so the team knows.
+ */
+function applyCorrections(result: ExtractionResult, corrections: SanityReport['corrections']): ExtractionResult {
+  for (const { tower, type, correctedTotal, source } of corrections) {
+    const row = result.tower_section?.[tower as 'Venus'|'Mercury'|'Neptune'|'Jupiter']?.[type];
+    if (!row) continue;
+    console.warn(`[sanity] auto-correcting ${tower} ${type} total_ltrs: ${row.total_ltrs} → ${correctedTotal} (from ${source})`);
+    row.total_ltrs = correctedTotal;
+    row.confidence = 0.65; // flagged — human should verify
+    result.flagged_fields = [
+      ...(result.flagged_fields ?? []),
+      `${tower}_${type}_total_ltrs: auto-corrected from ${source} (both Haiku and Opus disagreed with ${source})`,
+    ];
+  }
+  result.overall_confidence = Math.min(result.overall_confidence, 0.70);
+  return result;
 }
 
 import type { MistralVisionResult } from './mistralVision';
 
 /**
- * Compare Haiku tower totals against Mistral's independent reading.
- * Returns list of towers where they disagree by >15% — these are likely misreads.
- * Tolerance is generous (15%) to avoid false positives from minor digit variance.
+ * Compare primary-model tower totals against Mistral's independent reading.
+ * Returns list of disagreements where models differ by >15%.
  */
 function findMistralDisagreements(
-  haiku: ExtractionResult,
+  primary: ExtractionResult,
   mistral: MistralVisionResult
 ): string[] {
   if (!mistral.success || mistral.readings.length === 0) return [];
@@ -291,14 +324,13 @@ function findMistralDisagreements(
   const disagreements: string[] = [];
   for (const mr of mistral.readings) {
     if (mr.total_ltrs === null) continue;
-    const haikuVal = haiku.tower_section?.[mr.tower]?.[mr.type]?.total_ltrs;
-    if (haikuVal === null || haikuVal === undefined) continue;
+    const primaryVal = primary.tower_section?.[mr.tower]?.[mr.type]?.total_ltrs;
+    if (primaryVal === null || primaryVal === undefined) continue;
 
-    const ratio = Math.min(haikuVal, mr.total_ltrs) / Math.max(haikuVal, mr.total_ltrs);
+    const ratio = Math.min(primaryVal, mr.total_ltrs) / Math.max(primaryVal, mr.total_ltrs);
     if (ratio < 0.85) {
-      // >15% difference — they disagree
-      disagreements.push(`${mr.tower} ${mr.type}: haiku=${haikuVal} mistral=${mr.total_ltrs}`);
-      console.warn(`[extraction] Haiku/Mistral disagreement: ${mr.tower} ${mr.type} haiku=${haikuVal} mistral=${mr.total_ltrs} (ratio=${ratio.toFixed(2)})`);
+      disagreements.push(`${mr.tower} ${mr.type}: primary=${primaryVal} mistral=${mr.total_ltrs}`);
+      console.warn(`[extraction] disagreement: ${mr.tower} ${mr.type} primary=${primaryVal} mistral=${mr.total_ltrs} ratio=${ratio.toFixed(2)}`);
     }
   }
   return disagreements;
@@ -310,40 +342,69 @@ export async function extractSheetData(
   mistralResult?: MistralVisionResult
 ): Promise<ExtractionResult> {
   const result = await runExtraction(base64Image, mediaType, PRIMARY_MODEL);
-  console.log(`[extraction] model=${PRIMARY_MODEL} confidence=${result.overall_confidence}`);
+  console.log(`[extraction] Haiku confidence=${result.overall_confidence}`);
 
-  // Check 1: hard sanity violations (impossible values)
-  if (hasSanityViolation(result)) {
-    console.log(`[extraction] sanity violation → escalating to ${FALLBACK_MODEL}`);
-    const fallback = await runExtraction(base64Image, mediaType, FALLBACK_MODEL);
-    console.log(`[extraction] model=${FALLBACK_MODEL} confidence=${fallback.overall_confidence}`);
-    fallback.flagged_fields = [...(fallback.flagged_fields ?? []), 'opus_reason:sanity_violation'];
-    return fallback;
-  }
-
-  // Check 2: Mistral disagrees with Haiku on tower totals
+  // ── Check 1: Mistral disagrees with Haiku ───────────────────────────────────
+  // Do this FIRST — cheaper than Opus and catches the 1vs7 digit confusion reliably.
   if (mistralResult) {
     const disagreements = findMistralDisagreements(result, mistralResult);
     if (disagreements.length > 0) {
-      console.log(`[extraction] Mistral/Haiku disagreement on ${disagreements.length} field(s) → escalating to ${FALLBACK_MODEL}`);
-      const fallback = await runExtraction(base64Image, mediaType, FALLBACK_MODEL);
-      console.log(`[extraction] model=${FALLBACK_MODEL} confidence=${fallback.overall_confidence}`);
-      fallback.flagged_fields = [
-        ...(fallback.flagged_fields ?? []),
+      console.log(`[extraction] Mistral/Haiku disagree on ${disagreements.length} field(s) → Opus`);
+      const opusResult = await runExtraction(base64Image, mediaType, FALLBACK_MODEL);
+      console.log(`[extraction] Opus confidence=${opusResult.overall_confidence}`);
+
+      // Also run sanity on Opus result — if Opus ALSO fails, auto-correct from vol_today
+      const opusSanity = checkSanity(opusResult);
+      if (opusSanity.violated && opusSanity.corrections.length > 0) {
+        console.warn(`[extraction] Opus also failed sanity — applying vol_today corrections`);
+        applyCorrections(opusResult, opusSanity.corrections);
+      }
+
+      opusResult.flagged_fields = [
+        ...(opusResult.flagged_fields ?? []),
         `opus_reason:mistral_disagreement(${disagreements.join('; ')})`,
       ];
-      return fallback;
+      return opusResult;
     }
-    console.log('[extraction] Mistral agrees with Haiku — Opus not needed');
+    console.log('[extraction] Mistral agrees with Haiku — skipping Opus');
   }
 
-  // Check 3: low confidence (last resort — Mistral absent or edge case)
+  // ── Check 2: hard sanity violations on Haiku result ─────────────────────────
+  const haikuSanity = checkSanity(result);
+  if (haikuSanity.violated) {
+    console.log(`[extraction] Haiku sanity violation → Opus`);
+    const opusResult = await runExtraction(base64Image, mediaType, FALLBACK_MODEL);
+    console.log(`[extraction] Opus confidence=${opusResult.overall_confidence}`);
+
+    // Run sanity on Opus too — this is the critical fix for the Mercury repeat bug
+    const opusSanity = checkSanity(opusResult);
+    if (opusSanity.violated && opusSanity.corrections.length > 0) {
+      console.warn(`[extraction] Opus ALSO failed sanity — applying vol_today auto-corrections`);
+      applyCorrections(opusResult, opusSanity.corrections);
+      opusResult.flagged_fields = [
+        ...(opusResult.flagged_fields ?? []),
+        'opus_reason:sanity_violation',
+        'warning:both_models_failed_sanity_auto_corrected',
+      ];
+    } else {
+      opusResult.flagged_fields = [...(opusResult.flagged_fields ?? []), 'opus_reason:sanity_violation'];
+    }
+    return opusResult;
+  }
+
+  // ── Check 3: low confidence (last resort) ───────────────────────────────────
   if (result.overall_confidence < CONFIDENCE_THRESHOLD) {
-    console.log(`[extraction] low confidence (${result.overall_confidence}) → escalating to ${FALLBACK_MODEL}`);
-    const fallback = await runExtraction(base64Image, mediaType, FALLBACK_MODEL);
-    console.log(`[extraction] model=${FALLBACK_MODEL} confidence=${fallback.overall_confidence}`);
-    fallback.flagged_fields = [...(fallback.flagged_fields ?? []), 'opus_reason:low_confidence'];
-    return fallback;
+    console.log(`[extraction] Haiku low confidence (${result.overall_confidence}) → Opus`);
+    const opusResult = await runExtraction(base64Image, mediaType, FALLBACK_MODEL);
+    console.log(`[extraction] Opus confidence=${opusResult.overall_confidence}`);
+
+    const opusSanity = checkSanity(opusResult);
+    if (opusSanity.violated && opusSanity.corrections.length > 0) {
+      applyCorrections(opusResult, opusSanity.corrections);
+    }
+
+    opusResult.flagged_fields = [...(opusResult.flagged_fields ?? []), 'opus_reason:low_confidence'];
+    return opusResult;
   }
 
   return result;
