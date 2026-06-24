@@ -5,7 +5,8 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const PRIMARY_MODEL = process.env.EXTRACTION_MODEL ?? 'claude-haiku-4-5-20251001';
 const FALLBACK_MODEL = 'claude-opus-4-7';
-const CONFIDENCE_THRESHOLD = 0.70;
+// Raised from 0.70 → 0.80: Haiku reports falsely high confidence on misreads
+const CONFIDENCE_THRESHOLD = 0.80;
 
 const EXTRACTION_PROMPT = `You are analyzing a handwritten daily water meter reading sheet for Trinity World residential apartment complex in India.
 
@@ -215,6 +216,31 @@ async function runExtraction(
   return parsed;
 }
 
+/**
+ * Structural sanity check that catches Haiku falsely-high-confidence misreads.
+ * Returns true if the result contains values that are physically impossible
+ * for this sheet type, regardless of reported confidence.
+ */
+function hasSanityViolation(result: ExtractionResult): boolean {
+  const towers = result.tower_section;
+  if (!towers) return false;
+  for (const tower of ['Venus', 'Mercury', 'Neptune', 'Jupiter'] as const) {
+    const t = towers[tower];
+    if (!t) continue;
+    // DR total_ltrs > 80,000 L is impossible (sanity range max is 40,000)
+    if (t.DR?.total_ltrs != null && t.DR.total_ltrs > 80_000) {
+      console.warn(`[extraction] sanity violation: ${tower} DR total_ltrs=${t.DR.total_ltrs} (max 40,000)`);
+      return true;
+    }
+    // DO total_ltrs > 300,000 L is impossible (sanity range max is 250,000)
+    if (t.DO?.total_ltrs != null && t.DO.total_ltrs > 300_000) {
+      console.warn(`[extraction] sanity violation: ${tower} DO total_ltrs=${t.DO.total_ltrs} (max 250,000)`);
+      return true;
+    }
+  }
+  return false;
+}
+
 export async function extractSheetData(
   base64Image: string,
   mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif'
@@ -222,8 +248,10 @@ export async function extractSheetData(
   const result = await runExtraction(base64Image, mediaType, PRIMARY_MODEL);
   console.log(`[extraction] model=${PRIMARY_MODEL} confidence=${result.overall_confidence}`);
 
-  if (result.overall_confidence < CONFIDENCE_THRESHOLD) {
-    console.log(`[extraction] low confidence, retrying with ${FALLBACK_MODEL}`);
+  const needsFallback = result.overall_confidence < CONFIDENCE_THRESHOLD || hasSanityViolation(result);
+  if (needsFallback) {
+    const reason = result.overall_confidence < CONFIDENCE_THRESHOLD ? 'low confidence' : 'sanity violation';
+    console.log(`[extraction] ${reason}, retrying with ${FALLBACK_MODEL}`);
     const fallback = await runExtraction(base64Image, mediaType, FALLBACK_MODEL);
     console.log(`[extraction] model=${FALLBACK_MODEL} confidence=${fallback.overall_confidence}`);
     return fallback;
