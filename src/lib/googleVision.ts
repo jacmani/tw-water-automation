@@ -27,6 +27,7 @@ interface VisionFullTextAnnotation {
 interface VisionAnnotateResponse {
   responses: Array<{
     fullTextAnnotation?: VisionFullTextAnnotation;
+    error?: { code: number; message: string; status: string };
   }>;
 }
 
@@ -46,7 +47,12 @@ const EMPTY_RESULT: GoogleVisionResult = {
 
 export async function extractTextFromImage(base64: string): Promise<GoogleVisionResult> {
   const apiKey = process.env.GOOGLE_CLOUD_VISION_API_KEY;
-  if (!apiKey) return EMPTY_RESULT;
+  if (!apiKey) {
+    console.log('[vision] GOOGLE_CLOUD_VISION_API_KEY not set — skipping');
+    return EMPTY_RESULT;
+  }
+
+  console.log(`[vision] Calling API, base64 size: ${(base64.length / 1024).toFixed(1)}KB`);
 
   try {
     const response = await fetch(
@@ -64,13 +70,29 @@ export async function extractTextFromImage(base64: string): Promise<GoogleVision
     );
 
     if (!response.ok) {
-      console.error(`[vision] API error: ${response.status}`);
+      const errBody = await response.text();
+      console.error(`[vision] API error ${response.status}: ${errBody.slice(0, 300)}`);
       return EMPTY_RESULT;
     }
 
     const data = (await response.json()) as VisionAnnotateResponse;
-    const annotation = data.responses?.[0]?.fullTextAnnotation;
-    if (!annotation) return EMPTY_RESULT;
+    console.log(`[vision] Response received, responses count: ${data.responses?.length ?? 0}`);
+
+    const firstResp = data.responses?.[0];
+
+    // Check for Vision-level errors (API returns 200 but with error field)
+    if (firstResp?.error) {
+      console.error(`[vision] Vision response error: ${firstResp.error.code} ${firstResp.error.message}`);
+      return EMPTY_RESULT;
+    }
+
+    const annotation = firstResp?.fullTextAnnotation;
+    if (!annotation) {
+      console.warn('[vision] No fullTextAnnotation — image may be unreadable, too dark, or upside-down');
+      return EMPTY_RESULT;
+    }
+
+    console.log(`[vision] fullText length: ${annotation.text?.length ?? 0} chars`);
 
     const fullText = annotation.text ?? '';
     const words: string[] = [];
@@ -92,10 +114,13 @@ export async function extractTextFromImage(base64: string): Promise<GoogleVision
       }
     }
 
+    const detectedDate = extractDate(fullText);
+    console.log(`[vision] words: ${wordCount}, avgConf: ${wordCount > 0 ? (totalConf/wordCount).toFixed(2) : 0}, detectedDate: ${detectedDate ?? 'none'}`);
+
     return {
       fullText,
       words,
-      detectedDate: extractDate(fullText),
+      detectedDate,
       confidence: wordCount > 0 ? totalConf / wordCount : 0,
     };
   } catch (err) {
