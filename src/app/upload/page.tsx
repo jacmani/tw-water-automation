@@ -7,6 +7,75 @@ import imageCompression from 'browser-image-compression';
 import type { ExtractionResult } from '@/types';
 import { formatDate } from '@/lib/utils';
 
+// ── Live processing log types ────────────────────────────────────────────────
+type LogLevel = 'info' | 'success' | 'warn' | 'error' | 'engine';
+
+interface LogEntry {
+  id: number;
+  level: LogLevel;
+  message: string;
+  detail?: string;
+  elapsed?: number; // ms
+}
+
+// ── ProcessingLog component ──────────────────────────────────────────────────
+const LEVEL_ICON: Record<LogLevel, string> = {
+  info:    '⏳',
+  success: '✅',
+  warn:    '⚠️',
+  error:   '❌',
+  engine:  '🔍',
+};
+const LEVEL_MSG_COLOR: Record<LogLevel, string> = {
+  info:    'text-blue-300',
+  success: 'text-emerald-400',
+  warn:    'text-yellow-400',
+  error:   'text-red-400',
+  engine:  'text-violet-300',
+};
+const LEVEL_DETAIL_COLOR: Record<LogLevel, string> = {
+  info:    'text-slate-500',
+  success: 'text-slate-500',
+  warn:    'text-yellow-600',
+  error:   'text-red-600',
+  engine:  'text-slate-500',
+};
+
+function ProcessingLog({ entries }: { entries: LogEntry[] }) {
+  const bottomRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [entries]);
+
+  if (entries.length === 0) return null;
+
+  return (
+    <div className="mt-4 bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
+      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-800">
+        <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+        <span className="text-slate-400 text-xs font-semibold uppercase tracking-wider">Live Processing Log</span>
+      </div>
+      <div className="px-4 py-3 space-y-1.5 font-mono text-xs max-h-52 overflow-y-auto scrollbar-thin">
+        {entries.map((e) => (
+          <div key={e.id} className="flex items-start gap-2">
+            <span className="flex-shrink-0 w-4 text-center">{LEVEL_ICON[e.level]}</span>
+            <span className={`flex-1 leading-snug ${LEVEL_MSG_COLOR[e.level]}`}>
+              {e.message}
+              {e.detail && (
+                <span className={`ml-2 ${LEVEL_DETAIL_COLOR[e.level]}`}>— {e.detail}</span>
+              )}
+            </span>
+            {e.elapsed != null && (
+              <span className="flex-shrink-0 text-slate-700 tabular-nums">{(e.elapsed / 1000).toFixed(1)}s</span>
+            )}
+          </div>
+        ))}
+        <div ref={bottomRef} />
+      </div>
+    </div>
+  );
+}
+
 type Status =
   | 'idle'
   | 'compressing'
@@ -84,7 +153,7 @@ function ProgressDisplay({ status, preview }: { status: Status; preview: string 
               <div className="bg-slate-900/85 backdrop-blur-sm rounded-xl px-4 py-3 flex items-center gap-3 max-w-xs">
                 <span className="w-5 h-5 border-2 border-slate-600 border-t-blue-400 rounded-full animate-spin flex-shrink-0" />
                 <span className="text-blue-300 text-sm font-medium leading-snug">
-                  Artificial Intelligence is reading the handwritten log sheet uploaded
+                  OCR + AI engines reading sheet…
                 </span>
               </div>
             </div>
@@ -530,7 +599,14 @@ export default function UploadPage() {
   const [status, setStatus] = useState<Status>('idle');
   const [confirmPayload, setConfirmPayload] = useState<ConfirmPayload | null>(null);
   const [saveResult, setSaveResult] = useState<SaveResult | null>(null);
+  const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
+  const logIdRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  function addLog(level: LogLevel, message: string, detail?: string, elapsed?: number) {
+    const id = ++logIdRef.current;
+    setLogEntries(prev => [...prev, { id, level, message, detail, elapsed }]);
+  }
 
   function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -548,12 +624,16 @@ export default function UploadPage() {
     setStatus('idle');
     setConfirmPayload(null);
     setSaveResult(null);
+    setLogEntries([]);
+    logIdRef.current = 0;
     if (fileInputRef.current) fileInputRef.current.value = '';
   }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!file) return;
+    setLogEntries([]);
+    logIdRef.current = 0;
     setStatus('compressing');
     let imageToUpload = file;
     try {
@@ -565,18 +645,54 @@ export default function UploadPage() {
     formData.append('image', imageToUpload);
 
     try {
-      const res = await fetch('/api/upload', { method: 'POST', body: formData });
-      const json = await res.json();
-      if (!res.ok) { setStatus('error_other'); setSaveResult({ success: false, error: json.error ?? 'Something went wrong.' }); return; }
-      setConfirmPayload({
-        image_url: json.image_url,
-        extracted_date: json.extracted_date ?? null,
-        date_confidence: json.date_confidence,
-        date_unclear: !!json.date_unclear,
-        extraction: json.extraction,
-      });
-      // Route to date picker if AI couldn't read the date confidently
-      setStatus(json.date_unclear ? 'date_picker' : 'confirming');
+      const res = await fetch('/api/upload/stream', { method: 'POST', body: formData });
+      if (!res.ok || !res.body) {
+        // Fallback: stream not available, use legacy endpoint
+        const legacyRes = await fetch('/api/upload', { method: 'POST', body: formData });
+        const json = await legacyRes.json();
+        if (!legacyRes.ok) { setStatus('error_other'); setSaveResult({ success: false, error: json.error ?? 'Something went wrong.' }); return; }
+        setConfirmPayload({ image_url: json.image_url, extracted_date: json.extracted_date ?? null, date_confidence: json.date_confidence, date_unclear: !!json.date_unclear, extraction: json.extraction });
+        setStatus(json.date_unclear ? 'date_picker' : 'confirming');
+        return;
+      }
+
+      // Parse SSE stream
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop() ?? '';
+
+        for (const part of parts) {
+          const line = part.trim();
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+
+            if (event.type === 'log') {
+              addLog(event.level, event.message, event.detail, event.elapsed);
+            } else if (event.type === 'done') {
+              const json = event.payload;
+              setConfirmPayload({
+                image_url: json.image_url,
+                extracted_date: json.extracted_date ?? null,
+                date_confidence: json.date_confidence,
+                date_unclear: !!json.date_unclear,
+                extraction: json.extraction,
+              });
+              setStatus(json.date_unclear ? 'date_picker' : 'confirming');
+            } else if (event.type === 'error') {
+              setStatus('error_other');
+              setSaveResult({ success: false, error: event.message ?? 'Something went wrong.' });
+            }
+          } catch { /* malformed SSE line — skip */ }
+        }
+      }
     } catch {
       setStatus('error_other');
       setSaveResult({ success: false, error: 'Network error. Please try again.' });
@@ -632,7 +748,10 @@ export default function UploadPage() {
       <div className="flex-1 max-w-lg mx-auto w-full px-4 py-6">
 
         {(status === 'compressing' || status === 'extracting' || status === 'saving') && (
-          <ProgressDisplay status={status} preview={preview} />
+          <>
+            <ProgressDisplay status={status} preview={preview} />
+            {status === 'extracting' && <ProcessingLog entries={logEntries} />}
+          </>
         )}
 
         {status === 'success' && saveResult && (
