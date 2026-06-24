@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
 
   // Reject empty extractions — at least 4 towers must have a non-null total_ltrs
   // (either DO or DR). Prevents a failed Claude response from overwriting good data.
-  const towersWithData = ['Venus', 'Mercury', 'Neptune', 'Jupiter'].filter((t) => {
+  const towersWithData = (['Venus', 'Mercury', 'Neptune', 'Jupiter'] as TowerName[]).filter((t) => {
     const tower = extraction.tower_section?.[t];
     return tower && (tower.DO?.total_ltrs != null || tower.DR?.total_ltrs != null);
   });
