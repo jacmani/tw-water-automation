@@ -266,57 +266,85 @@ function AnnotatedCanvas({ imageUrl, flags }: { imageUrl: string; flags: FlagInf
       const badgeR = Math.max(20, W * 0.028);
       const fontSize = Math.max(16, W * 0.022);
 
+      // Group flags by section so badges in the same band don't overlap
+      // Build a map: sectionKey → list of indices in that section
+      const sectionGroups: Map<string, number[]> = new Map();
+      flags.forEach(({ sectionY, sectionH }, i) => {
+        const key = `${sectionY}-${sectionH}`;
+        if (!sectionGroups.has(key)) sectionGroups.set(key, []);
+        sectionGroups.get(key)!.push(i);
+      });
+
+      // Badge params — keep well inside the canvas
+      // Place badges on RIGHT side to avoid left-edge clipping
+      const accentW = W * 0.01;  // thin left accent bar
+      const badgeDiameter = badgeR * 2;
+
       flags.forEach(({ sectionY, sectionH, color }, i) => {
-        const y  = (sectionY  / 100) * H;
-        const h  = (sectionH  / 100) * H;
+        const y = (sectionY / 100) * H;
+        const h = (sectionH / 100) * H;
 
-        // Dim everything outside this band with a subtle dark overlay
-        // (don't do this per-flag — would compound; only draw the band itself)
-
-        // Filled band
         ctx.save();
-        ctx.fillStyle = color + '28';
+
+        // Filled band (clip to canvas bounds)
+        ctx.fillStyle = color + '22';
         ctx.fillRect(0, y, W, h);
 
-        // Left accent bar (thick stripe)
+        // Thin left accent bar
         ctx.fillStyle = color;
-        ctx.fillRect(0, y, W * 0.012, h);
+        ctx.fillRect(0, y, accentW, h);
 
         // Top + bottom border lines
         ctx.strokeStyle = color;
-        ctx.lineWidth = Math.max(2, H * 0.003);
+        ctx.lineWidth = Math.max(1, H * 0.002);
         ctx.setLineDash([]);
         ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(W, y);
-        ctx.moveTo(0, y + h);
-        ctx.lineTo(W, y + h);
+        ctx.moveTo(0, y); ctx.lineTo(W, y);
+        ctx.moveTo(0, y + h); ctx.lineTo(W, y + h);
         ctx.stroke();
 
-        // Badge circle on the left accent bar, vertically centred in band
-        const bx = W * 0.012 + badgeR * 0.7;
-        const by = y + h / 2;
+        // Badge position: right side, staggered vertically within band
+        // to avoid overlap when multiple flags share the same section
+        const key = `${sectionY}-${sectionH}`;
+        const siblings = sectionGroups.get(key)!;
+        const posInGroup = siblings.indexOf(i);
+        const totalInGroup = siblings.length;
 
+        // Distribute badges vertically within the band
+        const margin = badgeR + 4;
+        const usableH = h - margin * 2;
+        const step = totalInGroup > 1 ? usableH / (totalInGroup - 1) : 0;
+        const by = totalInGroup === 1
+          ? y + h / 2
+          : y + margin + posInGroup * step;
+
+        // X: right side, safely inside canvas
+        const bx = W - badgeR - accentW - 4;
+
+        // Badge circle
         ctx.fillStyle = color;
         ctx.beginPath();
         ctx.arc(bx, by, badgeR, 0, Math.PI * 2);
         ctx.fill();
 
-        // White border on badge
-        ctx.strokeStyle = '#fff';
+        // White border
+        ctx.strokeStyle = '#ffffff';
         ctx.lineWidth = Math.max(2, W * 0.003);
         ctx.beginPath();
         ctx.arc(bx, by, badgeR, 0, Math.PI * 2);
         ctx.stroke();
 
-        // Number inside badge
-        ctx.fillStyle = '#fff';
+        // Number
+        ctx.fillStyle = '#ffffff';
         ctx.font = `bold ${fontSize}px system-ui, sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(String(i + 1), bx, by);
 
         ctx.restore();
+
+        // Suppress unused variable warning
+        void badgeDiameter;
       });
 
       setReady(true);
