@@ -122,6 +122,15 @@ export async function POST(request: NextRequest) {
       .update({ processed_status: 'processed', confidence_score: extraction.overall_confidence })
       .eq('id', sheet.id);
 
+    // ── Mirror into the logbook data model so /logbook shows photo uploads too ──
+    // Best-effort: a mirror failure must never fail the upload (the canonical data
+    // already lives in the daily_sheets model above).
+    try {
+      await mirrorToLogbook(supabase, date, extraction);
+    } catch (mirrorErr) {
+      console.error('[confirm] logbook mirror failed (non-fatal):', mirrorErr);
+    }
+
     // ── Spike alert check ─────────────────────────────────────────────────────
     // Build per-tower totals from extraction
     const towerTotals: Record<TowerName, number> = {
@@ -195,6 +204,7 @@ export async function POST(request: NextRequest) {
     // Purge ISR cache so dashboard shows new data immediately
     revalidatePath('/');
     revalidatePath('/history');
+    revalidatePath('/logbook');
 
     return NextResponse.json({
       success: true,
@@ -210,5 +220,128 @@ export async function POST(request: NextRequest) {
       .update({ processed_status: 'failed' })
       .eq('id', sheet.id);
     return NextResponse.json({ error: 'Failed to store extracted data' }, { status: 500 });
+  }
+}
+
+// Maps an extraction `location` string (water source row) to the logbook source_name slug.
+function sourceSlug(location: string): string | null {
+  const l = location.toLowerCase();
+  if (l.includes('m+v') || l.includes('mtr')) return 'mercury_venus_tanker';
+  if (l.includes('j+n') || l.includes('jtr')) return 'jupiter_neptune_tanker';
+  if (l.includes('well 1') || l.includes('1+2+3')) return 'venus_side_well_123';
+  if (l.includes('well 4') || l.includes('4+b1') || l.includes('b1+b2')) return 'venus_side_well_4';
+  if (l.includes('well 5') || l.includes('n well 5')) return 'neptune_side_well_5';
+  if (l.includes('well 6') || l.includes('n well 6')) return 'neptune_side_well_6';
+  if (l.includes('open') || l.includes('outside')) return 'open_well';
+  return null;
+}
+
+/**
+ * Mirror a photo-upload extraction into the logbook data model (daily_log + child
+ * tables) so the /logbook page reflects photo uploads, not just manual entries.
+ * Uses the SAME upsert conflict keys as the manual /api/logbook route, so a manual
+ * edit and a photo upload for the same date converge instead of duplicating.
+ */
+async function mirrorToLogbook(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  date: string,
+  extraction: ExtractionResult
+): Promise<void> {
+  // 1. Master record
+  await supabase.from('daily_log').upsert(
+    { log_date: date, updated_at: new Date().toISOString() },
+    { onConflict: 'log_date' }
+  );
+
+  // 2. Tower meter readings (type → meter_type, total_ltrs → total_in_ltrs)
+  const towers: TowerName[] = ['Venus', 'Mercury', 'Neptune', 'Jupiter'];
+  const towerRows = towers.flatMap((tower) =>
+    (['DO', 'DR'] as const).map((mt) => {
+      const d = extraction.tower_section?.[tower]?.[mt];
+      return {
+        log_date: date,
+        tower,
+        meter_type: mt,
+        yesterday_reading: d?.r_yesterday ?? null,
+        today_reading: d?.r_today ?? null,
+        total_in_ltrs: d?.total_ltrs ?? null,
+        consumption_yesterday: d?.vol_yesterday ?? null,
+        consumption_today: d?.vol_today ?? null,
+        difference: d?.diff ?? null,
+      };
+    })
+  );
+  await supabase.from('tower_meter_readings').upsert(towerRows, { onConflict: 'log_date,tower,meter_type' });
+
+  // 3. Input source readings (location → source_name slug)
+  const srcRows = (extraction.water_sources ?? [])
+    .map((s) => {
+      const slug = sourceSlug(s.location ?? '');
+      if (!slug) return null;
+      return {
+        log_date: date,
+        source_name: slug,
+        yesterday_reading: s.r_yesterday ?? null,
+        today_reading: s.r_today ?? null,
+        consumption_yesterday: s.yesterday_ltrs ?? null,
+        consumption_today: s.today_ltrs ?? null,
+        total: s.total ?? null,
+      };
+    })
+    .filter((r): r is NonNullable<typeof r> => r !== null);
+  if (srcRows.length > 0) {
+    await supabase.from('input_source_readings').upsert(srcRows, { onConflict: 'log_date,source_name' });
+  }
+
+  // 4. Amenity meter readings (section → amenity_type, meter_name → location)
+  const amenityRows = (extraction.amenities ?? [])
+    .filter((a) => a.section === 'Car Wash' || a.section === 'Swimming Pool')
+    .map((a) => ({
+      log_date: date,
+      amenity_type: a.section,
+      location: a.meter_name,
+      yesterday: a.y_day ?? null,
+      today: a.r_day ?? null,
+      consumption: a.diff ?? null,
+      cumulative: null,
+    }));
+  if (amenityRows.length > 0) {
+    await supabase.from('amenity_meter_readings').upsert(amenityRows, { onConflict: 'log_date,amenity_type,location' });
+  }
+
+  // 5. Water level readings (tank/time_slot → wide columns). The extraction model
+  // stores one row per tank+slot; the logbook stores one wide row per slot.
+  const slotMap: Record<string, string> = { '6AM': '6AM', '12PM': '12PM', '6PM': '6PM', '12AM': '12AM' };
+  const bySlot: Record<string, Record<string, number | null>> = {};
+  for (const lvl of extraction.water_levels ?? []) {
+    const slot = slotMap[lvl.time_slot];
+    if (!slot) continue;
+    if (!bySlot[slot]) bySlot[slot] = {};
+    const pct = lvl.percentage ?? null;
+    if (lvl.tank === 'JDO') bySlot[slot].jupiter_do = pct;
+    else if (lvl.tank === 'JDR') bySlot[slot].jupiter_dr = pct;
+    else if (lvl.tank === 'CT') bySlot[slot].collection_tank = pct;
+    else if (lvl.tank === 'MDO') bySlot[slot].mercury_do = pct;
+    else if (lvl.tank === 'MDR') bySlot[slot].mercury_dr = pct;
+  }
+  const levelRows = Object.entries(bySlot).map(([time_slot, cols]) => ({
+    log_date: date, time_slot, ...cols,
+  }));
+  if (levelRows.length > 0) {
+    await supabase.from('water_level_readings').upsert(levelRows, { onConflict: 'log_date,time_slot' });
+  }
+
+  // 6. Daily inflow summary (summary → inflow columns)
+  const s = extraction.summary;
+  if (s) {
+    await supabase.from('daily_inflow_summary').upsert({
+      log_date: date,
+      well_inflow: (s.v_side ?? 0) + (s.n_side ?? 0) || null,
+      tanker_inflow: (s.jtr_tanker ?? 0) + (s.mtr_tanker ?? 0) || null,
+      total_collection: s.input_total ?? null,
+      total_usage: s.tower_usage ?? null,
+      balance: s.diff ?? null,
+    }, { onConflict: 'log_date' });
   }
 }
