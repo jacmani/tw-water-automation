@@ -11,7 +11,7 @@ A full-stack web application that replaces the WhatsApp photo dead-end at Trinit
 **Live URL:** https://tw-water-automation.vercel.app (Vercel, auto-deploys from main)  
 **Repo:** https://github.com/jacmani/tw-water-automation  
 **Supabase project:** Connect via env vars (see .env.example)  
-**Current version:** v2.0.0 — Multi-Engine OCR AI Architecture
+**Current version:** v3.0.0 — Cost-Inverted Multi-Engine OCR (free-first, Haiku-on-doubt, Opus removed)
 
 ---
 
@@ -22,10 +22,11 @@ A full-stack web application that replaces the WhatsApp photo dead-end at Trinit
 | Framework | Next.js 14 App Router | Server components for DB reads, client for interactivity |
 | Database + Storage | Supabase (Postgres + S3-compatible) | Managed, free tier sufficient, easy RLS |
 | Hosting | Vercel | Auto-deploy from GitHub, zero-config Next.js, Hobby plan |
-| Primary Extractor | Claude Haiku (`claude-haiku-4-5-20251001`) | Full sheet extraction with prompt caching |
-| Escalation Model | Claude Opus (`claude-opus-4-7`) | Called only when Qwen disagrees or sanity fails |
-| Parallel Validator | Qwen3-VL-8B via HuggingFace Router (Novita) | Different visual encoder to Claude, OCR-optimised |
-| Handwriting OCR | Mistral OCR 3 (`mistral-ocr-2512`) | 88.9% handwriting accuracy, context-injected into Haiku |
+| **Primary Extractor (FREE)** | **Google Gemini 2.5 Flash** (`gemini-2.5-flash`) | **NEW default.** Free tier 1,500 req/day, no card. Set via `EXTRACTION_PRIMARY=gemini` |
+| Escalation Model (PAID) | Claude Haiku (`claude-haiku-4-5-20251001`) | **Only paid model.** Called only when free engines disagree. **Opus REMOVED** (5× Haiku cost) |
+| Tie-breaker (FREE) | OpenRouter `qwen/qwen2.5-vl-32b-instruct:free` | Free second opinion before paying Haiku. 50 req/day free tier |
+| Parallel Validator (FREE) | Qwen3-VL-8B via HuggingFace Router (Novita) | Different visual encoder, OCR-optimised. Agreement gate vs primary |
+| Handwriting OCR | Mistral OCR 3 (`mistral-ocr-2512`) | 88.9% handwriting accuracy, context-injected into primary extractor |
 | Word OCR | Google Vision DOCUMENT_TEXT_DETECTION | Date + number corroboration |
 | Table OCR | OCR.space Engine 2 (`isTable=true`) | Free tier, 500 req/day |
 | Charts | Recharts | SSR-compatible via 'use client', works with html-to-image |
@@ -88,6 +89,8 @@ All numbers on the sheet use Indian comma convention: `1,76,000 = 176,000` (one 
 ## Five-Engine OCR Pipeline — Core Architecture
 
 This is the most important section. The pipeline in `src/lib/anthropic.ts` is the heart of the system.
+
+> **v3.0 cost inversion (read this first):** The pipeline is now **free-first**. Google Gemini 2.5 Flash (free) is the default primary extractor (`EXTRACTION_PRIMARY=gemini`). Claude is **only** called when the free engines genuinely disagree, and the escalation model is now **Haiku, not Opus** — Opus has been removed entirely (5× Haiku cost). The decision logic is unchanged in spirit: an **agreement gate** (primary vs Qwen) plus `checkSanity`, never a lone confidence score. New flow: **Gemini (free) → Qwen agreement gate (free) → OpenRouter tie-breaker (free) → Claude Haiku (paid, last resort)**. If `GEMINI_API_KEY` is unset, the primary falls back to Haiku so uploads never dead-end. `EXTRACTION_PRIMARY=haiku` restores legacy Claude-primary behaviour instantly. Modules: `src/lib/geminiVision.ts`, `src/lib/openRouterVision.ts`.
 
 ### The Digit Confusion Problem
 The recurring failure mode: handwritten 7 with a short crossbar is indistinguishable from 1 in photos. Example: `1,76,000` (176,000 L) is read as `1,16,000` (116,000 L) — a 60,000 L error. Neither Haiku nor Opus reliably catch this from pixel-reading alone. The solution is multi-engine cross-validation.

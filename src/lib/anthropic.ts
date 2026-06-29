@@ -3,12 +3,18 @@ import type { ExtractionResult } from '@/types';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-const PRIMARY_MODEL = process.env.EXTRACTION_MODEL ?? 'claude-haiku-4-5-20251001';
-const FALLBACK_MODEL = 'claude-opus-4-7';
-// Raised from 0.70 → 0.80: Haiku reports falsely high confidence on misreads
+// Claude Haiku is now the ONLY paid model and the LAST-RESORT escalation engine.
+// Opus has been removed entirely — it is 5× the cost of Haiku ($5/$25 vs $1/$5 per
+// M tokens) and the free cross-validation core (Gemini + Qwen + OpenRouter) makes it
+// unnecessary for this use case.
+const HAIKU_MODEL = process.env.EXTRACTION_MODEL ?? 'claude-haiku-4-5-20251001';
+// Which engine runs first. 'gemini' = free-first cost-inverted pipeline (default).
+// 'haiku' = legacy Claude-primary behaviour (instant rollback switch).
+const EXTRACTION_PRIMARY = (process.env.EXTRACTION_PRIMARY ?? 'gemini').toLowerCase();
+// Raised from 0.70 → 0.80: models report falsely high confidence on misreads
 const CONFIDENCE_THRESHOLD = 0.80;
 
-const EXTRACTION_PROMPT = `You are analyzing a handwritten daily water meter reading sheet for Trinity World residential apartment complex in India.
+export const EXTRACTION_PROMPT = `You are analyzing a handwritten daily water meter reading sheet for Trinity World residential apartment complex in India.
 
 Extract ALL data from this sheet and return it as a valid JSON object. Read carefully — the handwriting varies by technician.
 
@@ -322,50 +328,146 @@ function applyCorrections(result: ExtractionResult, corrections: SanityReport['c
 
 import type { QwenVisionResult } from './qwenVision';
 import type { MistralOcrResult } from './mistralOcr';
+import { extractSheetWithGemini } from './geminiVision';
+import { extractTowerTotalsWithOpenRouter, type OpenRouterVisionResult } from './openRouterVision';
+
+/** A generic tower-total reading from any independent engine. */
+interface TowerTotalReading {
+  tower: 'Venus' | 'Mercury' | 'Neptune' | 'Jupiter';
+  type: 'DO' | 'DR';
+  total_ltrs: number | null;
+}
+
+const TOLERANCE_RATIO = 0.85; // <0.85 (>15% apart) = genuine disagreement
 
 /**
- * Compare Haiku tower totals against Qwen3-VL's independent reading.
- * Both ran on the same image with different model architectures and different visual
- * encoders — so disagreements are genuine signals of a misread, not model noise.
- * Tolerance: 15% (ratio < 0.85). Returns list of disagreeing fields.
+ * Compare a primary extraction's tower totals against an independent engine's
+ * reading of the same 8 totals. Different architectures reading the same handwritten
+ * digit → disagreements are genuine misread signals, not model noise.
+ * Returns the list of disagreeing field descriptions.
  */
-function findQwenDisagreements(
-  haiku: ExtractionResult,
-  qwen: QwenVisionResult
+function findDisagreements(
+  primary: ExtractionResult,
+  readings: TowerTotalReading[],
+  primaryLabel: string,
+  otherLabel: string
 ): string[] {
-  if (!qwen.success || qwen.readings.length === 0) return [];
-
+  if (readings.length === 0) return [];
   const disagreements: string[] = [];
-  for (const qr of qwen.readings) {
-    if (qr.total_ltrs === null) continue;
-    const haikuVal = haiku.tower_section?.[qr.tower]?.[qr.type]?.total_ltrs;
-    if (haikuVal === null || haikuVal === undefined) continue;
-
-    const ratio = Math.min(haikuVal, qr.total_ltrs) / Math.max(haikuVal, qr.total_ltrs);
-    if (ratio < 0.85) {
-      disagreements.push(`${qr.tower} ${qr.type}: haiku=${haikuVal} qwen=${qr.total_ltrs}`);
-      console.warn(`[extraction] Haiku/Qwen3-VL disagree: ${qr.tower} ${qr.type} haiku=${haikuVal} qwen=${qr.total_ltrs} ratio=${ratio.toFixed(2)}`);
+  for (const r of readings) {
+    if (r.total_ltrs === null) continue;
+    const pv = primary.tower_section?.[r.tower]?.[r.type]?.total_ltrs;
+    if (pv === null || pv === undefined) continue;
+    const ratio = Math.min(pv, r.total_ltrs) / Math.max(pv, r.total_ltrs);
+    if (ratio < TOLERANCE_RATIO) {
+      disagreements.push(`${r.tower} ${r.type}: ${primaryLabel}=${pv} ${otherLabel}=${r.total_ltrs}`);
+      console.warn(`[extraction] ${primaryLabel}/${otherLabel} disagree: ${r.tower} ${r.type} ${primaryLabel}=${pv} ${otherLabel}=${r.total_ltrs} ratio=${ratio.toFixed(2)}`);
     }
   }
   return disagreements;
 }
 
 /**
- * Main extraction entry point.
+ * Tie-breaker resolution: for each disputed tower row, check whether the OpenRouter
+ * free engine agrees with the primary or with Qwen. If 2 of the 3 free engines agree
+ * on a value, adopt it into the primary result (free) and avoid paying for Haiku.
+ * Returns the count of rows resolved this way and the count still unresolved.
+ */
+function resolveWithTieBreaker(
+  primary: ExtractionResult,
+  qwen: QwenVisionResult,
+  openRouter: OpenRouterVisionResult
+): { resolved: number; unresolved: number } {
+  let resolved = 0;
+  let unresolved = 0;
+  if (!openRouter.success || openRouter.readings.length === 0) {
+    return { resolved: 0, unresolved: -1 }; // -1 = tie-breaker unavailable
+  }
+
+  for (const orr of openRouter.readings) {
+    if (orr.total_ltrs === null) continue;
+    const pv = primary.tower_section?.[orr.tower]?.[orr.type]?.total_ltrs;
+    const qv = qwen.readings.find(q => q.tower === orr.tower && q.type === orr.type)?.total_ltrs ?? null;
+    if (pv === null || pv === undefined || qv === null) continue;
+
+    const pqRatio = Math.min(pv, qv) / Math.max(pv, qv);
+    if (pqRatio >= TOLERANCE_RATIO) continue; // primary & qwen already agree on this row
+
+    const agreesPrimary = Math.min(pv, orr.total_ltrs) / Math.max(pv, orr.total_ltrs) >= TOLERANCE_RATIO;
+    const agreesQwen = Math.min(qv, orr.total_ltrs) / Math.max(qv, orr.total_ltrs) >= TOLERANCE_RATIO;
+
+    if (agreesPrimary && !agreesQwen) {
+      resolved++; // OpenRouter sides with primary → keep primary value
+      console.log(`[extraction] tie-breaker: OpenRouter confirms primary for ${orr.tower} ${orr.type}=${pv}`);
+    } else if (agreesQwen && !agreesPrimary) {
+      // OpenRouter sides with Qwen → adopt Qwen's value into the primary result
+      const row = primary.tower_section?.[orr.tower]?.[orr.type];
+      if (row) {
+        console.warn(`[extraction] tie-breaker: 2/3 free engines (Qwen+OpenRouter) agree → ${orr.tower} ${orr.type} ${pv} → ${qv}`);
+        row.total_ltrs = qv;
+        row.confidence = Math.min(row.confidence ?? 1, 0.8);
+        primary.flagged_fields = [
+          ...(primary.flagged_fields ?? []),
+          `${orr.tower}_${orr.type}_total_ltrs: tie-broken by free engines (Qwen+OpenRouter agreed on ${qv})`,
+        ];
+        resolved++;
+      }
+    } else {
+      unresolved++; // no 2-of-3 majority → needs paid escalation
+    }
+  }
+  return { resolved, unresolved };
+}
+
+/**
+ * Run the primary full-sheet extraction. Cost-inverted by default:
+ *   EXTRACTION_PRIMARY=gemini → Gemini 2.5 Flash (FREE). Falls back to Haiku only if
+ *                               Gemini is unavailable (no key / API error).
+ *   EXTRACTION_PRIMARY=haiku  → Claude Haiku (legacy paid-primary, instant rollback).
+ * Returns the result plus the engine label that produced it.
+ */
+async function runPrimaryExtraction(
+  base64Image: string,
+  mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
+  ocrTranscript?: string
+): Promise<{ result: ExtractionResult; engine: string }> {
+  if (EXTRACTION_PRIMARY === 'gemini') {
+    const gemini = await extractSheetWithGemini(base64Image, mediaType, ocrTranscript);
+    if (gemini.success && gemini.result) {
+      console.log(`[extraction] PRIMARY=Gemini (free), confidence=${gemini.result.overall_confidence}`);
+      return { result: gemini.result, engine: 'gemini' };
+    }
+    // Gemini unavailable → fall back to Haiku as primary so uploads never dead-end.
+    console.warn('[extraction] Gemini primary unavailable → falling back to Haiku as primary');
+    const haiku = await runExtraction(base64Image, mediaType, HAIKU_MODEL, ocrTranscript);
+    return { result: haiku, engine: 'haiku-primary-fallback' };
+  }
+
+  const haiku = await runExtraction(base64Image, mediaType, HAIKU_MODEL, ocrTranscript);
+  console.log(`[extraction] PRIMARY=Haiku, confidence=${haiku.overall_confidence}`);
+  return { result: haiku, engine: 'haiku' };
+}
+
+/**
+ * Main extraction entry point — COST-INVERTED, free-first, NO Opus.
  *
- * Pipeline (all parallel I/O where possible):
+ * Pipeline:
  *   Phase 1 (parallel, called by upload route):
- *     - Qwen3-VL-8B (HF router)  ← full parallel extractor, cheap, OCR-optimised
- *     - Google Vision             ← word-level OCR for date/number corroboration
- *     - OCR.space Engine 2        ← second OCR engine
+ *     - Qwen3-VL-8B (HF router, FREE)  ← independent tower-totals reader
+ *     - Mistral OCR 3                   ← handwriting transcript, injected into primary
+ *     - Google Vision / OCR.space       ← date/number corroboration (in validator)
  *
  *   Phase 2 (this function):
- *     - Claude Haiku (primary full extractor)
- *     - Compare Haiku vs Qwen3-VL tower totals
- *       → agree (ratio ≥0.85 on all rows): accept Haiku result
- *       → disagree: escalate to Opus, run sanity on Opus, auto-correct if needed
- *     - Fallback sanity check (catches cases where Qwen was absent)
- *     - Low-confidence escalation (last resort)
+ *     1. PRIMARY = Gemini 2.5 Flash (FREE) reads the full sheet (Haiku if forced/unavailable)
+ *     2. AGREEMENT GATE — compare primary vs Qwen tower totals + checkSanity + confidence
+ *        → all agree, sanity OK, confidence ≥ 0.80  → ACCEPT (zero paid cost)
+ *     3. FREE TIE-BREAKER — on disagreement, call OpenRouter (FREE); if 2 of 3 free
+ *        engines agree on a disputed row, adopt it (still zero paid cost)
+ *     4. PAID ESCALATION — only rows still unresolved → Claude Haiku (NOT Opus)
+ *        run checkSanity on Haiku; applyCorrections from vol_today as the final net
+ *
+ * Key principle: never trust a lone confidence score — the agreement gate is the
+ * accept/reject decision. A single model can confidently misread 1↔7.
  */
 export async function extractSheetData(
   base64Image: string,
@@ -373,80 +475,76 @@ export async function extractSheetData(
   qwenResult?: QwenVisionResult,
   mistralOcr?: MistralOcrResult
 ): Promise<ExtractionResult> {
-  // Use Mistral OCR transcript as a hint if available — gives Haiku a structured
-  // text version of the same sheet to resolve digit ambiguities against
   const ocrTranscript = mistralOcr?.success ? mistralOcr.markdown : undefined;
 
-  const result = await runExtraction(base64Image, mediaType, PRIMARY_MODEL, ocrTranscript);
-  console.log(`[extraction] Haiku confidence=${result.overall_confidence}${ocrTranscript ? ' (with Mistral OCR hint)' : ''}`);
+  // ── Phase 2.1: primary extraction (free Gemini by default) ──────────────────
+  const { result, engine } = await runPrimaryExtraction(base64Image, mediaType, ocrTranscript);
+  result.flagged_fields = [...(result.flagged_fields ?? []), `primary_engine:${engine}`];
 
-  // ── Check 1: Qwen3-VL disagrees with Haiku ──────────────────────────────────
-  // Two models with different architectures reading the same handwritten digit
-  // independently — agreement = very high confidence in the reading.
-  if (qwenResult) {
-    const disagreements = findQwenDisagreements(result, qwenResult);
-    if (disagreements.length > 0) {
-      console.log(`[extraction] Haiku/Qwen3-VL disagree on ${disagreements.length} field(s) → Opus`);
-      // Opus also gets the OCR transcript — gives it the best possible context
-      const opusResult = await runExtraction(base64Image, mediaType, FALLBACK_MODEL, ocrTranscript);
-      console.log(`[extraction] Opus confidence=${opusResult.overall_confidence}`);
+  // ── Phase 2.2: agreement gate — does an independent free engine confirm it? ──
+  const qwenReadings = qwenResult?.success ? qwenResult.readings : [];
+  const qwenDisagreements = findDisagreements(result, qwenReadings, 'primary', 'qwen');
+  const sanity = checkSanity(result);
+  const lowConfidence = result.overall_confidence < CONFIDENCE_THRESHOLD;
 
-      // Run sanity on Opus too — both Haiku AND Opus can share the same misread
-      const opusSanity = checkSanity(opusResult);
-      if (opusSanity.violated && opusSanity.corrections.length > 0) {
-        console.warn(`[extraction] Opus also failed sanity → auto-correcting from vol_today`);
-        applyCorrections(opusResult, opusSanity.corrections);
-        opusResult.flagged_fields = [
-          ...(opusResult.flagged_fields ?? []),
-          `opus_reason:qwen_disagreement(${disagreements.join('; ')})`,
-          'warning:opus_also_failed_sanity_auto_corrected_from_vol_today',
-        ];
-      } else {
-        opusResult.flagged_fields = [
-          ...(opusResult.flagged_fields ?? []),
-          `opus_reason:qwen_disagreement(${disagreements.join('; ')})`,
-        ];
-      }
-      return opusResult;
-    }
-    console.log('[extraction] Qwen3-VL agrees with Haiku — Opus not needed');
+  const gateClean = qwenDisagreements.length === 0 && !sanity.violated && !lowConfidence;
+  if (gateClean) {
+    console.log('[extraction] Agreement gate PASSED → accepting free result, no paid call');
+    return result;
   }
+  console.log(`[extraction] Gate failed (qwenDisagreements=${qwenDisagreements.length}, sanity=${sanity.violated}, lowConf=${lowConfidence})`);
 
-  // ── Check 2: sanity check on Haiku result (catches cases Qwen was absent) ───
-  const haikuSanity = checkSanity(result);
-  if (haikuSanity.violated) {
-    console.log(`[extraction] Haiku sanity violation → Opus`);
-    const opusResult = await runExtraction(base64Image, mediaType, FALLBACK_MODEL, ocrTranscript);
-    console.log(`[extraction] Opus confidence=${opusResult.overall_confidence}`);
-
-    const opusSanity = checkSanity(opusResult);
-    if (opusSanity.violated && opusSanity.corrections.length > 0) {
-      console.warn(`[extraction] Opus ALSO failed sanity → auto-correcting from vol_today`);
-      applyCorrections(opusResult, opusSanity.corrections);
-      opusResult.flagged_fields = [
-        ...(opusResult.flagged_fields ?? []),
-        'opus_reason:sanity_violation',
-        'warning:both_models_failed_sanity_auto_corrected',
-      ];
+  // ── Phase 2.3: free tie-breaker (OpenRouter) for tower-total disagreements ───
+  let stillNeedsPaid = sanity.violated || lowConfidence;
+  if (qwenDisagreements.length > 0 && qwenResult) {
+    const openRouter = await extractTowerTotalsWithOpenRouter(base64Image, mediaType);
+    const { resolved, unresolved } = resolveWithTieBreaker(result, qwenResult, openRouter);
+    if (unresolved === -1) {
+      console.log('[extraction] Tie-breaker unavailable — disagreements remain → paid escalation');
+      stillNeedsPaid = true;
     } else {
-      opusResult.flagged_fields = [...(opusResult.flagged_fields ?? []), 'opus_reason:sanity_violation'];
+      console.log(`[extraction] Tie-breaker resolved ${resolved} row(s), ${unresolved} unresolved`);
+      if (unresolved > 0) stillNeedsPaid = true;
+      // Re-run sanity after free corrections — may now be clean.
+      if (!stillNeedsPaid && !checkSanity(result).violated) {
+        result.flagged_fields = [...(result.flagged_fields ?? []), 'resolved_by:free_tie_breaker'];
+        console.log('[extraction] Resolved entirely by free engines → no paid call');
+        return result;
+      }
     }
-    return opusResult;
   }
 
-  // ── Check 3: low confidence (last resort) ───────────────────────────────────
-  if (result.overall_confidence < CONFIDENCE_THRESHOLD) {
-    console.log(`[extraction] Haiku low confidence (${result.overall_confidence}) → Opus`);
-    const opusResult = await runExtraction(base64Image, mediaType, FALLBACK_MODEL, ocrTranscript);
-    console.log(`[extraction] Opus confidence=${opusResult.overall_confidence}`);
-
-    const opusSanity = checkSanity(opusResult);
-    if (opusSanity.violated && opusSanity.corrections.length > 0) {
-      applyCorrections(opusResult, opusSanity.corrections);
-    }
-    opusResult.flagged_fields = [...(opusResult.flagged_fields ?? []), 'opus_reason:low_confidence'];
-    return opusResult;
+  if (!stillNeedsPaid) {
+    return result;
   }
 
-  return result;
+  // ── Phase 2.4: PAID escalation to Claude Haiku (last resort — NO Opus) ───────
+  console.log('[extraction] Escalating to Claude Haiku (paid, last resort)');
+  const haikuResult = await runExtraction(base64Image, mediaType, HAIKU_MODEL, ocrTranscript);
+  console.log(`[extraction] Haiku escalation confidence=${haikuResult.overall_confidence}`);
+
+  const reasons: string[] = [];
+  if (qwenDisagreements.length > 0) reasons.push(`qwen_disagreement(${qwenDisagreements.join('; ')})`);
+  if (sanity.violated) reasons.push('sanity_violation');
+  if (lowConfidence) reasons.push('low_confidence');
+
+  // Run sanity on Haiku too — the escalation engine can share the same misread.
+  const haikuSanity = checkSanity(haikuResult);
+  if (haikuSanity.violated && haikuSanity.corrections.length > 0) {
+    console.warn('[extraction] Haiku escalation ALSO failed sanity → auto-correcting from vol_today');
+    applyCorrections(haikuResult, haikuSanity.corrections);
+    haikuResult.flagged_fields = [
+      ...(haikuResult.flagged_fields ?? []),
+      `escalation_engine:haiku`,
+      `escalation_reason:${reasons.join('|')}`,
+      'warning:haiku_also_failed_sanity_auto_corrected_from_vol_today',
+    ];
+  } else {
+    haikuResult.flagged_fields = [
+      ...(haikuResult.flagged_fields ?? []),
+      `escalation_engine:haiku`,
+      `escalation_reason:${reasons.join('|')}`,
+    ];
+  }
+  return haikuResult;
 }

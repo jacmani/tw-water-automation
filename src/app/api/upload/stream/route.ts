@@ -140,23 +140,29 @@ export async function POST(request: NextRequest) {
           }),
         ]);
 
-        // ── Step 3: Claude Haiku (+ possible Opus escalation) ─────────────────
-        log('info', `Claude Haiku extracting all sheet data${mistralOcrResult.success ? ' (with Mistral OCR hint)' : ''}…`);
+        // ── Step 3: Cost-inverted extraction (free Gemini primary, Haiku last resort) ──
+        log('info', `Extracting all sheet data (free engines first)${mistralOcrResult.success ? ' (with Mistral OCR hint)' : ''}…`);
         const extracted = await extractSheetData(base64, mediaType, qwenResult, mistralOcrResult);
 
-        // Detect whether Opus was used (flagged_fields contain opus_reason)
-        const opusReason = extracted.flagged_fields?.find(f => f.startsWith('opus_reason:'));
-        const autoFixed = extracted.flagged_fields?.find(f => f.includes('auto_corrected'));
-        if (opusReason) {
-          const reason = opusReason.replace('opus_reason:', '');
-          log('warn', 'Haiku/Qwen disagreed — Claude Opus called', reason);
-          if (autoFixed) {
-            log('warn', 'Claude Opus ✓ (with auto-correction)', `Both models failed sanity — vol_today used as source of truth`);
-          } else {
-            log('success', `Claude Opus ✓`, `confidence ${(extracted.overall_confidence * 100).toFixed(0)}%`);
-          }
+        // Report which engine produced the final result, from flagged_fields markers.
+        const fields = extracted.flagged_fields ?? [];
+        const primaryEngine = fields.find(f => f.startsWith('primary_engine:'))?.replace('primary_engine:', '') ?? 'unknown';
+        const escalated = fields.find(f => f.startsWith('escalation_engine:'));
+        const tieBroken = fields.find(f => f === 'resolved_by:free_tie_breaker');
+        const autoFixed = fields.find(f => f.includes('auto_corrected'));
+        const conf = `confidence ${(extracted.overall_confidence * 100).toFixed(0)}%`;
+
+        const primaryLabel = primaryEngine.startsWith('gemini') ? 'Gemini 2.5 Flash (free)' : 'Claude Haiku';
+        if (escalated) {
+          const reason = fields.find(f => f.startsWith('escalation_reason:'))?.replace('escalation_reason:', '') ?? '';
+          log('warn', `Free engines disagreed — escalated to Claude Haiku (paid)`, reason);
+          log(autoFixed ? 'warn' : 'success',
+            autoFixed ? 'Claude Haiku ✓ (with auto-correction)' : 'Claude Haiku ✓',
+            autoFixed ? 'Escalation also failed sanity — vol_today used as source of truth' : conf);
+        } else if (tieBroken) {
+          log('success', `Resolved by free tie-breaker (OpenRouter)`, `2 of 3 free engines agreed — no paid call, ${conf}`);
         } else {
-          log('success', `Claude Haiku ✓`, `Qwen3-VL agrees — confidence ${(extracted.overall_confidence * 100).toFixed(0)}%, Opus not needed`);
+          log('success', `${primaryLabel} ✓`, `Qwen3-VL agrees — ${conf}, no paid escalation`);
         }
 
         // ── Step 4: Validation ────────────────────────────────────────────────
