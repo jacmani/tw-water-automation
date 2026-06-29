@@ -64,8 +64,11 @@ export async function extractSheetWithGemini(
 
   try {
     // Hard timeout so a slow Gemini response can't stall the whole pipeline.
+    // Raised to 60s: gemini-2.5-flash with a long structured-JSON output was
+    // hitting the old 30s cap and ALWAYS aborting → falling back to paid Haiku.
+    // We have a 5-min function budget, so 60s is safe.
     const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), 30_000);
+    const timer = setTimeout(() => ac.abort(), 60_000);
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${apiKey}`,
       {
@@ -87,6 +90,10 @@ export async function extractSheetWithGemini(
             // The full-sheet JSON (8 towers + 8 sources + 24 levels + 14 amenities +
             // summary) is large — 4096 truncated it mid-object, producing invalid JSON.
             maxOutputTokens: 8192,
+            // CRITICAL: gemini-2.5-flash enables "thinking" by default, which adds
+            // 20–40s of latency before any output — that was the real cause of the
+            // 30s timeouts. Disable it: this is structured OCR extraction, not reasoning.
+            thinkingConfig: { thinkingBudget: 0 },
             // Force pure-JSON output so we don't have to strip markdown fences.
             responseMimeType: 'application/json',
           },
