@@ -332,13 +332,15 @@ async function mirrorToLogbook(
     await supabase.from('water_level_readings').upsert(levelRows, { onConflict: 'log_date,time_slot' });
   }
 
-  // 6. Daily inflow summary (summary → inflow columns)
+  // 6. Daily inflow summary — now a DIRECT 1:1 mapping to the sheet's TOTAL INFLOW
+  // columns (no more v_side+n_side guesswork that mislabeled tanker/well values).
   const s = extraction.summary;
   if (s) {
     await supabase.from('daily_inflow_summary').upsert({
       log_date: date,
-      well_inflow: (s.v_side ?? 0) + (s.n_side ?? 0) || null,
-      tanker_inflow: (s.jtr_tanker ?? 0) + (s.mtr_tanker ?? 0) || null,
+      water_inflow: s.water_inflow ?? null,
+      well_inflow: s.well_inflow ?? null,
+      tanker_inflow: s.tanker_inflow ?? null,
       total_collection: s.input_total ?? null,
       total_usage: s.tower_usage ?? null,
       balance: s.diff ?? null,

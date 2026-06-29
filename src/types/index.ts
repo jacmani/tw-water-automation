@@ -148,13 +148,19 @@ export interface AmenityData {
 }
 
 export interface SummaryData {
-  v_side: number | null;
-  n_side: number | null;
-  jtr_tanker: number | null;
-  mtr_tanker: number | null;
-  input_total: number | null;
-  tower_usage: number | null;
-  diff: number | null;
+  // Sheet's bottom TOTAL INFLOW table columns (the accurate mapping):
+  water_inflow: number | null;   // WATER column
+  well_inflow: number | null;    // WELL column
+  tanker_inflow: number | null;  // TANKER column
+  input_total: number | null;    // TOTAL COLLECTION column
+  tower_usage: number | null;    // TOTAL USAGE column
+  diff: number | null;           // BALANCE column
+  // Legacy fields — retained for backward compatibility with existing rows and
+  // History flagging. No longer populated by new uploads. Do not rely on these.
+  v_side?: number | null;
+  n_side?: number | null;
+  jtr_tanker?: number | null;
+  mtr_tanker?: number | null;
   confidence: number;
 }
 

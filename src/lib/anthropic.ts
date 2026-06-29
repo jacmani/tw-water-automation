@@ -60,20 +60,26 @@ Columns: Y Day, R Day, Diff
 Meters: Meter 6, Meter 7, WTP1, WTP2, VUF, JUF, Venus STP
 Columns: Y Day, T Day, Diff
 
-=== SECTION 6: WATER CONSUMPTION SUMMARY (bottom of sheet) ===
-This section has 7 labeled rows. You MUST anchor each value to its row label text —
-never read positionally. The row labels and their JSON fields are:
-  "V Side Well B1+B2"       → v_side
-  "N Side Well+B3"          → n_side
-  "JTR Tanker"              → jtr_tanker
-  "MTR Tanker"              → mtr_tanker
-  "IN PUT total"            → input_total   (sum of all input sources)
-  "Tower Usage (OUT PUT)"   → tower_usage
-  "Diff"                    → diff
+=== SECTION 6: TOTAL INFLOW (bottom table of sheet) ===
+The bottom of the sheet is a table titled "TOTAL INFLOW" with these COLUMN headers,
+left to right:
+  WATER | WELL | TANKER | TOTAL COLLECTION | TOTAL USAGE | BALANCE
+There is a main data row and a "CUMULATIVE" row below it. Read the MAIN row (not the
+cumulative row). Anchor each value to its COLUMN header — never read positionally.
 
-CRITICAL: The "IN PUT total" is a TOTAL row. Its value is always larger than any
-individual source row above it. Never place the input_total value into v_side,
-n_side, jtr_tanker, or mtr_tanker. Read the label text on each row explicitly.
+  "WATER"             → water_inflow      (treated/municipal water inflow)
+  "WELL"              → well_inflow       (total from all wells)
+  "TANKER"            → tanker_inflow     (total tanker water received)
+  "TOTAL COLLECTION"  → input_total       (WATER + WELL + TANKER — the grand total inflow)
+  "TOTAL USAGE"       → tower_usage       (total consumed by towers)
+  "BALANCE"           → diff              (TOTAL COLLECTION − TOTAL USAGE; may be +/−)
+
+CRITICAL anchoring rules:
+- "TOTAL COLLECTION" is a TOTAL — it is the LARGEST of WATER/WELL/TANKER/COLLECTION and
+  should ≈ WATER + WELL + TANKER. Never put the collection total into WATER/WELL/TANKER.
+- If a cell is blank, output null — do NOT copy a neighbouring column's value into it.
+- These columns are NOT the same as the wells/tankers in Section 2. Section 2 lists
+  individual meter readings; Section 6 lists the day's rolled-up inflow totals.
 
 === INDIAN NUMBER FORMAT ===
 Numbers on this sheet are written in Indian/South Asian format with commas:
@@ -106,12 +112,11 @@ Expected ranges:
   Tower section total_ltrs (DO rows): 50,000 – 250,000 L
   Tower section total_ltrs (DR rows): 5,000 – 40,000 L
   Water source Total column: 20,000 – 400,000 L
-  summary.v_side: 30,000 – 200,000 L
-  summary.n_side: 30,000 – 350,000 L
-  summary.jtr_tanker: 0 – 500,000 L
-  summary.mtr_tanker: 0 – 500,000 L
-  summary.input_total: 150,000 – 900,000 L
-  summary.tower_usage: 300,000 – 800,000 L
+  summary.water_inflow: 0 – 600,000 L
+  summary.well_inflow: 0 – 500,000 L
+  summary.tanker_inflow: 0 – 500,000 L
+  summary.input_total (TOTAL COLLECTION): 150,000 – 900,000 L
+  summary.tower_usage (TOTAL USAGE): 300,000 – 800,000 L
 
 === CONFIDENCE SCORING ===
 1.0 = completely clear
@@ -201,7 +206,7 @@ Return ONLY a valid JSON object — no markdown, no explanation. Use null for bl
     {"section": "Party Hall", "meter_name": "Venus STP", "y_day": null, "r_day": null, "diff": null, "confidence": 0.0}
   ],
   "summary": {
-    "v_side": null, "n_side": null, "jtr_tanker": null, "mtr_tanker": null,
+    "water_inflow": null, "well_inflow": null, "tanker_inflow": null,
     "input_total": null, "tower_usage": null, "diff": null, "confidence": 0.0
   },
   "flagged_fields": []
