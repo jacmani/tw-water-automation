@@ -708,6 +708,22 @@ function DatePickerScreen({ imageUrl, aiGuess, onConfirm, onRetake }: DatePicker
   );
 }
 
+// Tower DO/DR totals the AI could not read (null after the pipeline clamp) — these
+// are critical accountability numbers, so we require the technician to enter them
+// before saving. Returns a list like [{ tower:'Venus', type:'DO', key:'Venus_DO' }].
+const TOWERS_FOR_ENTRY = ['Venus', 'Mercury', 'Neptune', 'Jupiter'] as const;
+function findMissingTowerTotals(extraction: ExtractionResult | undefined) {
+  const missing: Array<{ tower: string; type: 'DO' | 'DR'; key: string }> = [];
+  if (!extraction?.tower_section) return missing;
+  for (const tower of TOWERS_FOR_ENTRY) {
+    for (const type of ['DO', 'DR'] as const) {
+      const v = extraction.tower_section[tower]?.[type]?.total_ltrs;
+      if (v == null) missing.push({ tower, type, key: `${tower}_${type}` });
+    }
+  }
+  return missing;
+}
+
 // ── Main ────────────────────────────────────────────────────────────────────
 export default function UploadPage() {
   const [file, setFile] = useState<File | null>(null);
@@ -716,6 +732,8 @@ export default function UploadPage() {
   const [confirmPayload, setConfirmPayload] = useState<ConfirmPayload | null>(null);
   const [saveResult, setSaveResult] = useState<SaveResult | null>(null);
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
+  // Manual entries for tower DO/DR totals the AI could not read (key e.g. "Venus_DO").
+  const [manualTotals, setManualTotals] = useState<Record<string, string>>({});
   const logIdRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -741,6 +759,7 @@ export default function UploadPage() {
     setConfirmPayload(null);
     setSaveResult(null);
     setLogEntries([]);
+    setManualTotals({});
     logIdRef.current = 0;
     if (fileInputRef.current) fileInputRef.current.value = '';
   }
@@ -817,6 +836,24 @@ export default function UploadPage() {
 
   async function handleConfirm(overrideDate?: string) {
     if (!confirmPayload) return;
+
+    // Merge any manually-entered tower totals into the extraction before saving.
+    const extraction: ExtractionResult = JSON.parse(JSON.stringify(confirmPayload.extraction));
+    for (const [key, valStr] of Object.entries(manualTotals)) {
+      const num = Number(valStr.replace(/[, ]/g, ''));
+      if (!Number.isFinite(num) || num <= 0) continue;
+      const [tower, type] = key.split('_') as [keyof typeof extraction.tower_section, 'DO' | 'DR'];
+      const row = extraction.tower_section?.[tower]?.[type];
+      if (row) {
+        row.total_ltrs = num;
+        row.confidence = 1; // human-entered = authoritative
+      }
+      extraction.flagged_fields = (extraction.flagged_fields ?? []).filter(
+        f => !f.toLowerCase().startsWith(key.toLowerCase())
+      );
+      extraction.flagged_fields.push(`${key}_total_ltrs: manually entered by technician`);
+    }
+
     setStatus('saving');
     const finalDate = overrideDate ?? confirmPayload.extracted_date;
     const dateSource = overrideDate ? 'manual' : 'ai';
@@ -827,7 +864,7 @@ export default function UploadPage() {
         body: JSON.stringify({
           image_url: confirmPayload.image_url,
           date: finalDate,
-          extraction: confirmPayload.extraction,
+          extraction,
           date_source: dateSource,
         }),
       });
@@ -922,9 +959,53 @@ export default function UploadPage() {
               <p className="text-emerald-400 text-xs mt-1.5">AI confidence: {Math.round(confirmPayload.date_confidence * 100)}%</p>
             </div>
             <p className="text-slate-400 text-sm text-center">Does this date look correct?</p>
+
+            {/* Required manual entry for tower totals the AI could not read */}
+            {(() => {
+              const missing = findMissingTowerTotals(confirmPayload.extraction);
+              if (missing.length === 0) return null;
+              const allFilled = missing.every(m => {
+                const v = manualTotals[m.key]?.replace(/[, ]/g, '');
+                return v && Number(v) > 0;
+              });
+              return (
+                <div className="bg-amber-900/15 border border-amber-700/40 rounded-xl p-4 space-y-3">
+                  <p className="text-amber-300 font-semibold text-sm">
+                    {missing.length} reading{missing.length > 1 ? 's' : ''} couldn&apos;t be read — please enter {missing.length > 1 ? 'them' : 'it'} from your sheet
+                  </p>
+                  <p className="text-slate-400 text-xs">These are required before saving so the dashboard stays accurate.</p>
+                  {missing.map(m => (
+                    <div key={m.key} className="flex items-center gap-3">
+                      <label className="text-slate-200 text-sm flex-1">
+                        {m.tower} — {m.type === 'DO' ? 'Domestic (overhead)' : 'Drinking water'}
+                      </label>
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        placeholder="Litres"
+                        value={manualTotals[m.key] ?? ''}
+                        onChange={e => setManualTotals(prev => ({ ...prev, [m.key]: e.target.value }))}
+                        className="w-32 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm text-right focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+                  ))}
+                  {!allFilled && <p className="text-amber-400/70 text-xs">Enter all values to enable Save.</p>}
+                </div>
+              );
+            })()}
+
             <div className="flex gap-3">
               <button onClick={resetToIdle} className="flex-1 bg-slate-800 hover:bg-slate-700 text-white py-3 rounded-xl font-medium transition-colors">Retake Photo</button>
-              <button onClick={() => handleConfirm()} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-xl font-semibold transition-colors">Confirm & Save</button>
+              <button
+                onClick={() => handleConfirm()}
+                disabled={!findMissingTowerTotals(confirmPayload.extraction).every(m => {
+                  const v = manualTotals[m.key]?.replace(/[, ]/g, '');
+                  return v && Number(v) > 0;
+                })}
+                className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:cursor-not-allowed text-white py-3 rounded-xl font-semibold transition-colors"
+              >
+                Confirm &amp; Save
+              </button>
             </div>
           </div>
         )}
