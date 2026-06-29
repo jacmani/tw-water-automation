@@ -93,6 +93,7 @@ interface ConfirmPayload {
   date_confidence: number;
   date_unclear: boolean;
   extraction: ExtractionResult;
+  date_was_manual?: boolean;       // true if the technician picked the date by hand
 }
 
 interface SaveResult {
@@ -248,77 +249,80 @@ function parseFlagCore(raw: string, idx: number): Omit<FlagInfo, 'severity' | 'r
   // ── Tower readings (section 2) ────────────────────────────────────
   // Matches both spaced ("Venus DO") and underscore ("Venus_DO", "tower_Venus_DO_total_ltrs") forms.
   if (lower.match(/tower|venus[ _]d[or]|mercury[ _]d[or]|neptune[ _]d[or]|jupiter[ _]d[or]|venus|mercury|neptune|jupiter/)) {
-    const towerMap: Record<string, string> = {
-      venus: 'Venus Tower', mercury: 'Mercury Tower',
-      neptune: 'Neptune Tower', jupiter: 'Jupiter Tower',
-    };
-    const typeMap: Record<string, string> = { do: 'Domestic (overhead)', dr: 'Drinking water' };
+    // Plain-English gloss for the DO/DR abbreviation used on the sheet.
+    const typeGloss: Record<string, string> = { do: 'Domestic / Overhead', dr: 'Drinking water' };
     const tm = lower.match(/(venus|mercury|neptune|jupiter)/);
     // Accept DO/DR bounded by space OR underscore (e.g. "venus_do_total_ltrs").
     const dm = lower.match(/[ _](do|dr)[ _]/) ?? lower.match(/\b(do|dr)\b/);
-    const rowHint = tm ? `${towerMap[tm[1]] ?? tm[1]} — ${dm ? typeMap[dm[1]] ?? dm[1] : ''} row`.replace(/ —  row$/, ' row') : 'Tower readings table';
+    // Use the sheet's OWN row label first ("VENUS DO"), with the plain meaning in
+    // parentheses — so it matches exactly what the technician reads on paper.
+    const rowHint = tm && dm
+      ? `${tm[1].toUpperCase()} ${dm[1].toUpperCase()} row (${typeGloss[dm[1]]})`
+      : tm ? `${tm[1].toUpperCase()} tower rows` : 'Tower Meter Reading table (top of sheet)';
     return { sectionY: 6, sectionH: 24, sectionName: 'Tower Meter Readings', rowHint, problem: cleanProblem(raw), color };
   }
 
-  // ── Water sources (section 3) ─────────────────────────────────────
+  // ── Water sources / wells & tankers (2nd METER READING table) ─────
   if (lower.match(/water_source|source|well|tanker|kingsley/)) {
+    // Row labels exactly as printed on the sheet's 2nd METER READING table.
     const srcLabels: Record<string, string> = {
-      'v well 4': 'Venus Side Well 4+B1+B2 row',
-      'b1+b2': 'Venus Side Well 4+B1+B2 row',
-      'v well 1': 'Venus Side Well 1+2+3 row',
-      'n well 5': 'Neptune Side Well 5 row',
-      'n well 6': 'Neptune Side Well 6 row',
-      'open well': 'Open Well row',
-      'on outside': 'ON Outside Well row',
-      'kingsley': 'Kingsley row',
-      'mtr': 'Mercury+Venus Tanker row',
-      'jtr': 'Jupiter+Neptune Tanker row',
+      'v well 4': 'VENUS SIDE WELL 4 row',
+      'b1+b2': 'VENUS SIDE WELL 4 row',
+      'v well 1': 'VENUS SIDE WELL 1 2 3 row',
+      'n well 5': 'NEPTUNE SIDE WELL 5 row',
+      'n well 6': 'NEPTUNE SIDE WELL 6 row',
+      'open well': 'OPEN WELL row',
+      'on outside': 'OPEN WELL row',
+      'mtr': 'MERCURY + VENUS TANKER row',
+      'jtr': 'JUPITER + NEPTUNE TANKER row',
     };
-    let rowHint = 'Input source readings table';
+    let rowHint = 'Wells & Tankers table (2nd METER READING table)';
     for (const [k, v] of Object.entries(srcLabels)) {
       if (lower.includes(k)) { rowHint = v; break; }
     }
-    return { sectionY: 30, sectionH: 22, sectionName: 'Input Source / Well Readings', rowHint, problem: cleanProblem(raw), color };
+    return { sectionY: 30, sectionH: 22, sectionName: 'Wells & Tankers (METER READING)', rowHint, problem: cleanProblem(raw), color };
   }
 
-  // ── Amenities (section 4) ─────────────────────────────────────────
+  // ── Car Wash / Swimming Pool ──────────────────────────────────────
   if (lower.match(/amenit|car wash|swimming pool|pool|party hall/)) {
     const isPool = lower.includes('swimming pool') || lower.includes('pool');
     const isParty = lower.includes('party hall');
-    const locM = lower.match(/(jupiter|mercury|venus|neptune|meter [1-7])/);
+    const locM = lower.match(/(jupiter|mercury|venus|neptune|meter[ -]?[1-7])/);
+    const loc = locM ? locM[1].toUpperCase().replace('METER', 'METER-').replace('--', '-') : '';
     const rowHint = locM
-      ? `${isPool ? 'Swimming Pool' : isParty ? 'Party Hall' : 'Car Wash'} — ${locM[1].replace(/\b\w/g, c => c.toUpperCase())} row`
-      : isPool ? 'Swimming Pool section' : isParty ? 'Party Hall section' : 'Car Wash section';
-    return { sectionY: 52, sectionH: 12, sectionName: 'Amenities (Car Wash / Pool)', rowHint, problem: cleanProblem(raw), color };
+      ? `${isPool ? 'SWIMMING POOL' : isParty ? 'P HALL' : 'CAR WASH'} — ${loc} column`
+      : isPool ? 'SWIMMING POOL section' : isParty ? 'P HALL section' : 'CAR WASH section';
+    return { sectionY: 52, sectionH: 12, sectionName: 'Car Wash / Swimming Pool', rowHint, problem: cleanProblem(raw), color };
   }
 
-  // ── Water levels (section 5) ──────────────────────────────────────
+  // ── Water level in percentage ─────────────────────────────────────
   if (lower.match(/water_level|tank level|jdo|jdr|mdo|mdr|collection tank|fire tank/)) {
     const slotM = lower.match(/(6am|12pm|6pm|12am|06:00|12:00|18:00|00:00)/);
     const slotNames: Record<string, string> = {
-      '6am': '6 AM', '06:00': '6 AM', '12pm': '12 PM', '12:00': '12 PM',
-      '6pm': '6 PM', '18:00': '6 PM', '12am': '12 AM', '00:00': '12 AM',
+      '6am': '06.00 AM', '06:00': '06.00 AM', '12pm': '12.00 PM', '12:00': '12.00 PM',
+      '6pm': '06.00 PM', '18:00': '06.00 PM', '12am': '12.00 AM', '00:00': '12.00 AM',
     };
-    const rowHint = slotM ? `${slotNames[slotM[1]] ?? slotM[1]} reading row` : 'Water tank levels table';
-    return { sectionY: 64, sectionH: 14, sectionName: 'Water Tank Level Readings', rowHint, problem: cleanProblem(raw), color };
+    const rowHint = slotM ? `${slotNames[slotM[1]] ?? slotM[1]} row` : 'WATER LEVEL IN PERCENTAGE table';
+    return { sectionY: 64, sectionH: 14, sectionName: 'Water Level in Percentage', rowHint, problem: cleanProblem(raw), color };
   }
 
   // ── Summary / Total Inflow (section 7) ───────────────────────────
   if (lower.match(/summary|input_total|tower_usage|v_side|n_side|jtr_tanker|mtr_tanker|inflow|balance/)) {
+    // Columns as printed in the bottom TOTAL INFLOW table.
     const fieldNames: Record<string, string> = {
-      v_side: '"Venus Side Well" total cell',
-      n_side: '"Neptune Side Well" total cell',
-      jtr_tanker: '"JTR Tanker" total cell',
-      mtr_tanker: '"MTR Tanker" total cell',
-      input_total: '"Total Input" cell',
-      tower_usage: '"Tower Usage" cell',
-      diff: '"Difference" cell',
+      v_side: '"WELL" column',
+      n_side: '"WELL" column',
+      jtr_tanker: '"TANKER" column',
+      mtr_tanker: '"TANKER" column',
+      input_total: '"TOTAL COLLECTION" column',
+      tower_usage: '"TOTAL USAGE" column',
+      diff: '"BALANCE" column',
     };
-    let rowHint = 'Total Inflow summary row (bottom of sheet)';
+    let rowHint = 'TOTAL INFLOW table (bottom of sheet)';
     for (const [k, v] of Object.entries(fieldNames)) {
       if (lower.includes(k)) { rowHint = v; break; }
     }
-    return { sectionY: 88, sectionH: 12, sectionName: 'Total Inflow Summary (bottom row)', rowHint, problem: cleanProblem(raw), color };
+    return { sectionY: 88, sectionH: 12, sectionName: 'TOTAL INFLOW (bottom of sheet)', rowHint, problem: cleanProblem(raw), color };
   }
 
   // Fallback
@@ -856,7 +860,8 @@ export default function UploadPage() {
 
     setStatus('saving');
     const finalDate = overrideDate ?? confirmPayload.extracted_date;
-    const dateSource = overrideDate ? 'manual' : 'ai';
+    // 'manual' if explicitly overridden OR if the date was picked by hand earlier.
+    const dateSource = (overrideDate || confirmPayload.date_was_manual) ? 'manual' : 'ai';
     try {
       const res = await fetch('/api/upload/confirm', {
         method: 'POST',
@@ -932,7 +937,17 @@ export default function UploadPage() {
           <DatePickerScreen
             imageUrl={preview}
             aiGuess={confirmPayload.extracted_date}
-            onConfirm={(date) => handleConfirm(date)}
+            onConfirm={(date) => {
+              // If any tower total is unreadable, the date is now known but we still
+              // need the technician to fill those in — route to the confirm screen
+              // (which carries the manual-entry gate) instead of saving directly.
+              if (findMissingTowerTotals(confirmPayload.extraction).length > 0) {
+                setConfirmPayload({ ...confirmPayload, extracted_date: date, date_unclear: false, date_was_manual: true });
+                setStatus('confirming');
+              } else {
+                handleConfirm(date);
+              }
+            }}
             onRetake={resetToIdle}
           />
         )}
