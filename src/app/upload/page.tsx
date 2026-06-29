@@ -42,37 +42,62 @@ const LEVEL_DETAIL_COLOR: Record<LogLevel, string> = {
   engine:  'text-slate-500',
 };
 
-function ProcessingLog({ entries }: { entries: LogEntry[] }) {
+// `live` = still streaming (auto-scrolls, pulsing dot, always open).
+// When not live (after extraction finishes) the log PERSISTS as a collapsible
+// "Processing details" panel so the cost summary and full engine trace remain
+// visible on the confirm/success screens instead of vanishing the instant the
+// pipeline completes.
+function ProcessingLog({ entries, live = true }: { entries: LogEntry[]; live?: boolean }) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(true);
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [entries]);
+    if (live) bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [entries, live]);
 
   if (entries.length === 0) return null;
 
+  // Pull the cost summary line out so we can always surface it in the header,
+  // even when the detail is collapsed.
+  const costLine = [...entries].reverse().find(e => e.message.includes('Total this scan'));
+
   return (
     <div className="mt-4 bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
-      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-800">
-        <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
-        <span className="text-slate-400 text-xs font-semibold uppercase tracking-wider">Live Processing Log</span>
-      </div>
-      <div className="px-4 py-3 space-y-1.5 font-mono text-xs max-h-96 overflow-y-auto scrollbar-thin">
-        {entries.map((e) => (
-          <div key={e.id} className="flex items-start gap-2">
-            <span className="flex-shrink-0 w-4 text-center">{LEVEL_ICON[e.level]}</span>
-            <span className={`flex-1 leading-snug ${LEVEL_MSG_COLOR[e.level]}`}>
-              {e.message}
-              {e.detail && (
-                <span className={`ml-2 ${LEVEL_DETAIL_COLOR[e.level]}`}>— {e.detail}</span>
+      <button
+        type="button"
+        onClick={() => !live && setOpen(o => !o)}
+        className="w-full flex items-center gap-2 px-4 py-2.5 border-b border-slate-800 text-left"
+      >
+        <span className={`w-2 h-2 rounded-full ${live ? 'bg-blue-400 animate-pulse' : 'bg-slate-500'}`} />
+        <span className="text-slate-400 text-xs font-semibold uppercase tracking-wider">
+          {live ? 'Live Processing Log' : 'Processing details'}
+        </span>
+        {/* Always-visible cost chip once the scan is done */}
+        {!live && costLine && (
+          <span className="ml-2 text-emerald-400 text-xs font-medium normal-case tracking-normal">
+            {costLine.message.replace(/^💰\s*Total this scan:\s*/, '💰 ')}
+          </span>
+        )}
+        {!live && <span className="ml-auto text-slate-500 text-xs">{open ? '▾ hide' : '▸ show'}</span>}
+      </button>
+      {open && (
+        <div className="px-4 py-3 space-y-1.5 font-mono text-xs max-h-96 overflow-y-auto scrollbar-thin">
+          {entries.map((e) => (
+            <div key={e.id} className="flex items-start gap-2">
+              <span className="flex-shrink-0 w-4 text-center">{LEVEL_ICON[e.level]}</span>
+              <span className={`flex-1 leading-snug ${LEVEL_MSG_COLOR[e.level]}`}>
+                {e.message}
+                {e.detail && (
+                  <span className={`ml-2 ${LEVEL_DETAIL_COLOR[e.level]}`}>— {e.detail}</span>
+                )}
+              </span>
+              {e.elapsed != null && (
+                <span className="flex-shrink-0 text-slate-700 tabular-nums">{(e.elapsed / 1000).toFixed(1)}s</span>
               )}
-            </span>
-            {e.elapsed != null && (
-              <span className="flex-shrink-0 text-slate-700 tabular-nums">{(e.elapsed / 1000).toFixed(1)}s</span>
-            )}
-          </div>
-        ))}
-        <div ref={bottomRef} />
-      </div>
+            </div>
+          ))}
+          <div ref={bottomRef} />
+        </div>
+      )}
     </div>
   );
 }
@@ -922,6 +947,9 @@ export default function UploadPage() {
               imageUrl={confirmPayload?.image_url ?? null}
             />
 
+            {/* Persistent processing trace + cost — collapsed, survives the screen switch */}
+            <ProcessingLog entries={logEntries} live={false} />
+
             <div className="flex gap-3">
               <button onClick={resetToIdle} className="flex-1 bg-slate-800 hover:bg-slate-700 text-white py-3 rounded-xl font-medium transition-colors">
                 Upload Another
@@ -1035,6 +1063,9 @@ export default function UploadPage() {
                 Confirm &amp; Save
               </button>
             </div>
+
+            {/* Persistent processing trace + cost — visible before saving too */}
+            <ProcessingLog entries={logEntries} live={false} />
           </div>
         )}
 
