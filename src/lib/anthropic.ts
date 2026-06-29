@@ -295,27 +295,34 @@ interface SanityReport {
  */
 function deriveCorrection(
   row: { total_ltrs: number | null; vol_today: number | null; r_today: number | null; r_yesterday: number | null },
-  ceiling: number
+  ceiling: number,
+  floor: number
 ): { value: number | null; source: string } {
   const { total_ltrs, vol_today, r_today, r_yesterday } = row;
+  // A candidate is only acceptable if it's BOTH below the impossible ceiling AND
+  // above a plausibility floor. This stops us "correcting" an impossible 1.4M into an
+  // equally implausible 133 L — if no candidate is plausible, we null it for manual entry.
+  const ok = (v: number) => v >= floor && v <= ceiling;
 
   // 1. vol_today — independent column
-  if (vol_today != null && vol_today > 0 && vol_today <= ceiling) {
-    return { value: vol_today, source: 'vol_today' };
-  }
+  if (vol_today != null && ok(vol_today)) return { value: vol_today, source: 'vol_today' };
   // 2. meter delta — fully independent of the total cell
   if (r_today != null && r_yesterday != null) {
     const delta = r_today - r_yesterday;
-    if (delta > 0 && delta <= ceiling) return { value: delta, source: 'meter_delta(r_today-r_yesterday)' };
+    if (ok(delta)) return { value: delta, source: 'meter_delta(r_today-r_yesterday)' };
   }
   // 3. clean 10× place-value slip (e.g. 1,416,000 → 141,600)
   if (total_ltrs != null) {
     const div10 = Math.round(total_ltrs / 10);
-    if (div10 > 0 && div10 <= ceiling) return { value: div10, source: 'divided_by_10(place_value_slip)' };
+    if (ok(div10)) return { value: div10, source: 'divided_by_10(place_value_slip)' };
   }
   // 4. give up — null it, force manual entry
   return { value: null, source: 'unrecoverable_nulled_for_manual_review' };
 }
+
+// Plausibility floors — a corrected value below these is too small to be real.
+const DO_FLOOR = 20_000; // DO rows are tens of thousands of litres
+const DR_FLOOR = 1_000;  // DR rows are at least a few thousand
 
 /**
  * Structural sanity check.
@@ -336,7 +343,7 @@ function checkSanity(result: ExtractionResult): SanityReport {
 
     // ── Hard ceiling: DR > 80k is impossible. ALWAYS derive a correction. ──
     if (t.DR?.total_ltrs != null && t.DR.total_ltrs > DR_CEILING) {
-      const c = deriveCorrection(t.DR, DR_CEILING);
+      const c = deriveCorrection(t.DR, DR_CEILING, DR_FLOOR);
       console.warn(`[sanity] ${tower} DR total_ltrs=${t.DR.total_ltrs} > ${DR_CEILING} → correct to ${c.value} via ${c.source}`);
       violated = true;
       corrections.push({ tower, type: 'DR', correctedTotal: c.value, source: c.source });
@@ -344,7 +351,7 @@ function checkSanity(result: ExtractionResult): SanityReport {
 
     // ── Hard ceiling: DO > 300k is impossible. ALWAYS derive a correction. ──
     if (t.DO?.total_ltrs != null && t.DO.total_ltrs > DO_CEILING) {
-      const c = deriveCorrection(t.DO, DO_CEILING);
+      const c = deriveCorrection(t.DO, DO_CEILING, DO_FLOOR);
       console.warn(`[sanity] ${tower} DO total_ltrs=${t.DO.total_ltrs} > ${DO_CEILING} → correct to ${c.value} via ${c.source}`);
       violated = true;
       corrections.push({ tower, type: 'DO', correctedTotal: c.value, source: c.source });
@@ -405,8 +412,9 @@ function enforceHardCeilings(result: ExtractionResult): ExtractionResult {
     for (const type of ['DO', 'DR'] as const) {
       const row = t[type];
       const ceiling = type === 'DO' ? DO_CEILING : DR_CEILING;
+      const floor = type === 'DO' ? DO_FLOOR : DR_FLOOR;
       if (row?.total_ltrs != null && row.total_ltrs > ceiling) {
-        const c = deriveCorrection(row, ceiling);
+        const c = deriveCorrection(row, ceiling, floor);
         console.warn(`[clamp] ${tower} ${type} STILL impossible (${row.total_ltrs}) after pipeline → forcing ${c.value} via ${c.source}`);
         row.total_ltrs = c.value;
         row.confidence = Math.min(row.confidence ?? 1, c.value === null ? 0.4 : 0.5);

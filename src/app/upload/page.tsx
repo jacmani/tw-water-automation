@@ -217,15 +217,17 @@ function parseFlag(raw: string, idx: number): FlagInfo {
   const color = COLORS[idx % COLORS.length];
 
   // ── Tower readings (section 2) ────────────────────────────────────
-  if (lower.match(/tower|venus do|venus dr|mercury do|mercury dr|neptune|jupiter do|jupiter dr/)) {
+  // Matches both spaced ("Venus DO") and underscore ("Venus_DO", "tower_Venus_DO_total_ltrs") forms.
+  if (lower.match(/tower|venus[ _]d[or]|mercury[ _]d[or]|neptune[ _]d[or]|jupiter[ _]d[or]|venus|mercury|neptune|jupiter/)) {
     const towerMap: Record<string, string> = {
       venus: 'Venus Tower', mercury: 'Mercury Tower',
       neptune: 'Neptune Tower', jupiter: 'Jupiter Tower',
     };
     const typeMap: Record<string, string> = { do: 'Domestic (overhead)', dr: 'Drinking water' };
     const tm = lower.match(/(venus|mercury|neptune|jupiter)/);
-    const dm = lower.match(/\b(do|dr)\b/);
-    const rowHint = tm ? `${towerMap[tm[1]] ?? tm[1]} — ${dm ? typeMap[dm[1]] ?? dm[1] : ''} row` : 'Tower readings table';
+    // Accept DO/DR bounded by space OR underscore (e.g. "venus_do_total_ltrs").
+    const dm = lower.match(/[ _](do|dr)[ _]/) ?? lower.match(/\b(do|dr)\b/);
+    const rowHint = tm ? `${towerMap[tm[1]] ?? tm[1]} — ${dm ? typeMap[dm[1]] ?? dm[1] : ''} row`.replace(/ —  row$/, ' row') : 'Tower readings table';
     return { sectionY: 6, sectionH: 24, sectionName: 'Tower Meter Readings', rowHint, problem: cleanProblem(raw), color };
   }
 
@@ -300,7 +302,21 @@ function cleanProblem(raw: string): string {
   const detail = parts.slice(1).join(':').trim();
   if (!detail) return 'Please verify this value against the original sheet.';
 
-  return detail
+  let msg = detail
+    // ── v3.0 auto-correction / clamp markers → plain English ──
+    .replace(/final_clamp\s*(?:nulled|→\s*null)/gi, 'The reading was impossible and could not be auto-fixed — please enter it manually')
+    .replace(/final_clamp\s*→?\s*([\d,]+)\s*\(via [^)]*\)/gi, 'The original reading was impossible; we corrected it to $1 — please verify against the sheet')
+    .replace(/nulled[^.]*needs manual entry[^)]*\)?/gi, 'Could not read this value — please enter it manually')
+    .replace(/auto-corrected to ([\d,]+)\s*\(via [^)]*\)/gi, 'Auto-corrected to $1 — please verify against the sheet')
+    .replace(/auto-corrected from \w+[^)]*\)/gi, 'Auto-corrected from a cross-check column — please verify')
+    .replace(/auto_corrected_from_vol_today/gi, 'Auto-corrected using the volume-today column — please verify')
+    .replace(/qwen_disagreement\([^)]*\)/gi, 'Two AI engines read this differently — please double-check')
+    .replace(/sanity_violation/gi, 'Value was outside the expected range')
+    .replace(/low_confidence/gi, 'The AI was not confident about this reading')
+    .replace(/\bvia meter_delta[^)]*\)?/gi, '')
+    .replace(/\bvia vol_today\)?/gi, '')
+    .replace(/\bvia divided_by_10[^)]*\)?/gi, '')
+    // ── legacy v2.0 markers ──
     .replace(/out_of_range[^)]*\)/gi, 'Number looks unusual — please double-check')
     .replace(/out_of_range/gi, 'Number looks unusual — please double-check')
     .replace(/blank\/unreadable/gi, 'Value is blank or could not be read from the photo')
@@ -309,8 +325,12 @@ function cleanProblem(raw: string): string {
     .replace(/reading uncertain/gi, 'Handwriting is unclear — please check the original')
     .replace(/consumption noted as (\S+)\s*reading uncertain/gi, 'Consumption of $1 is hard to read — please verify')
     .replace(/\(value:?\s*[\d,]+\)/gi, '')
+    .replace(/[_|]+/g, ' ')
     .replace(/\s{2,}/g, ' ')
     .trim();
+  // If after cleaning we're left with a bare field token, give a generic message.
+  if (!msg || /^[a-z_]+$/i.test(msg)) msg = 'Please verify this value against the original sheet.';
+  return msg;
 }
 
 // ── Annotated canvas — draws section highlight bands ───────────────────────
@@ -435,10 +455,32 @@ function AnnotatedCanvas({ imageUrl, flags }: { imageUrl: string; flags: FlagInf
 }
 
 // ── Flagged panel ───────────────────────────────────────────────────────────
+// Internal pipeline diagnostics — never shown to the committee. These are engine
+// provenance / escalation markers, useful in logs and the DB but not user-facing.
+const INTERNAL_FLAG_PREFIXES = [
+  'primary_engine:',
+  'escalation_engine:',
+  'escalation_reason:',
+  'opus_reason:',          // legacy
+  'resolved_by:',
+  'warning:',
+];
+function isInternalFlag(raw: string): boolean {
+  const r = raw.trim().toLowerCase();
+  if (INTERNAL_FLAG_PREFIXES.some(p => r.startsWith(p))) return true;
+  // Bare engine-name markers like "haiku" / "gemini" that carry no user meaning.
+  if (/^(haiku|gemini|opus|qwen)\b/.test(r) && !r.includes('total') && !r.includes('reading')) return true;
+  return false;
+}
+
 function FlaggedPanel({ flaggedFields, imageUrl }: { flaggedFields: string[]; imageUrl: string | null }) {
   if (!flaggedFields.length) return null;
 
-  const flags = flaggedFields.map((f, i) => parseFlag(f, i));
+  // Drop internal diagnostics, then de-duplicate identical user-facing flags.
+  const userFlags = Array.from(new Set(flaggedFields.filter(f => !isInternalFlag(f))));
+  if (!userFlags.length) return null;
+
+  const flags = userFlags.map((f, i) => parseFlag(f, i));
 
   return (
     <div className="space-y-4">
