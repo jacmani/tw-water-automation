@@ -32,13 +32,23 @@ export interface OpenRouterVisionResult {
   model: string;
 }
 
-const MODEL = process.env.OPENROUTER_MODEL ?? 'qwen/qwen2.5-vl-32b-instruct:free';
+// OpenRouter's free-model roster ROTATES — slugs disappear without notice (the old
+// qwen/qwen2.5-vl-32b-instruct:free now 404s). So we try an ordered list of currently-
+// live free vision models until one responds, instead of hard-coding a single slug.
+// Verified live against the OpenRouter models API (June 2026). OPENROUTER_MODEL, if set,
+// is tried first.
+const MODEL_CANDIDATES = [
+  process.env.OPENROUTER_MODEL,
+  'nvidia/nemotron-nano-12b-v2-vl:free',  // document/OCR-oriented VL, free
+  'google/gemma-4-31b-it:free',            // Gemma 4 vision, free
+  'google/gemma-4-26b-a4b-it:free',
+].filter(Boolean) as string[];
 
 const EMPTY_RESULT: OpenRouterVisionResult = {
   readings: [],
   rawText: '',
   success: false,
-  model: MODEL,
+  model: MODEL_CANDIDATES[0] ?? 'none',
 };
 
 // Same focused prompt as Qwen — only the 8 tower totals, tight token budget.
@@ -81,70 +91,75 @@ export async function extractTowerTotalsWithOpenRouter(
     return EMPTY_RESULT;
   }
 
-  console.log(`[openrouter] Calling ${MODEL} (free tie-breaker)`);
+  // Try each candidate model until one responds. 404 (dead slug) / 400 → try next.
+  for (const model of MODEL_CANDIDATES) {
+    console.log(`[openrouter] Trying ${model} (free tie-breaker)`);
+    try {
+      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+          'HTTP-Referer': 'https://tw-water-automation.vercel.app',
+          'X-Title': 'TW Water Automation',
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 300,
+          temperature: 0,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: PROMPT },
+                { type: 'image_url', image_url: { url: `data:${mediaType};base64,${base64}` } },
+              ],
+            },
+          ],
+        }),
+      });
 
-  try {
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-        // OpenRouter recommends these for free-tier attribution; harmless if generic.
-        'HTTP-Referer': 'https://tw-water-automation.vercel.app',
-        'X-Title': 'TW Water Automation',
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 300,
-        temperature: 0,
-        messages: [
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: PROMPT },
-              { type: 'image_url', image_url: { url: `data:${mediaType};base64,${base64}` } },
-            ],
-          },
-        ],
-      }),
-    });
-
-    if (!response.ok) {
-      const err = await response.text();
-      console.error(`[openrouter] API error ${response.status}: ${err.slice(0, 300)}`);
-      return EMPTY_RESULT;
-    }
-
-    const data = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-
-    const raw = data.choices?.[0]?.message?.content ?? '';
-    console.log(`[openrouter] Raw response: ${raw.slice(0, 300)}`);
-
-    const jsonMatch = raw.replace(/<think>[\s\S]*?<\/think>/g, '').match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      console.warn('[openrouter] No JSON found in response');
-      return { ...EMPTY_RESULT, rawText: raw };
-    }
-
-    const parsed = JSON.parse(jsonMatch[0]) as Record<string, number | null>;
-
-    const towers = ['Venus', 'Mercury', 'Neptune', 'Jupiter'] as const;
-    const types = ['DO', 'DR'] as const;
-    const readings: OpenRouterTowerReading[] = [];
-
-    for (const tower of towers) {
-      for (const type of types) {
-        const val = parsed[`${tower}_${type}`];
-        readings.push({ tower, type, total_ltrs: typeof val === 'number' ? val : null });
+      if (!response.ok) {
+        const err = await response.text();
+        // Dead slug or bad request → move on to the next candidate.
+        if (response.status === 404 || response.status === 400) {
+          console.warn(`[openrouter] ${model} unavailable (${response.status}) — trying next candidate`);
+          continue;
+        }
+        // Rate limit / server error → no point trying more free models right now.
+        console.error(`[openrouter] API error ${response.status}: ${err.slice(0, 200)}`);
+        return EMPTY_RESULT;
       }
-    }
 
-    console.log('[openrouter] Readings:', readings.map(r => `${r.tower} ${r.type}=${r.total_ltrs}`).join(', '));
-    return { readings, rawText: raw, success: true, model: MODEL };
-  } catch (err) {
-    console.error('[openrouter] Unexpected error:', err);
-    return EMPTY_RESULT;
+      const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+      const raw = data.choices?.[0]?.message?.content ?? '';
+      console.log(`[openrouter] ${model} raw: ${raw.slice(0, 200)}`);
+
+      const jsonMatch = raw.replace(/<think>[\s\S]*?<\/think>/g, '').match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        console.warn(`[openrouter] ${model} returned no JSON — trying next candidate`);
+        continue;
+      }
+
+      const parsed = JSON.parse(jsonMatch[0]) as Record<string, number | null>;
+      const towers = ['Venus', 'Mercury', 'Neptune', 'Jupiter'] as const;
+      const types = ['DO', 'DR'] as const;
+      const readings: OpenRouterTowerReading[] = [];
+      for (const tower of towers) {
+        for (const type of types) {
+          const val = parsed[`${tower}_${type}`];
+          readings.push({ tower, type, total_ltrs: typeof val === 'number' ? val : null });
+        }
+      }
+
+      console.log(`[openrouter] ✓ ${model}:`, readings.map(r => `${r.tower} ${r.type}=${r.total_ltrs}`).join(', '));
+      return { readings, rawText: raw, success: true, model };
+    } catch (err) {
+      console.error(`[openrouter] ${model} error:`, err);
+      // try next candidate
+    }
   }
+
+  console.warn('[openrouter] All candidate models failed — tie-breaker unavailable');
+  return EMPTY_RESULT;
 }

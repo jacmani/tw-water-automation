@@ -80,7 +80,9 @@ export async function extractSheetWithGemini(
           ],
           generationConfig: {
             temperature: 0,
-            maxOutputTokens: 4096,
+            // The full-sheet JSON (8 towers + 8 sources + 24 levels + 14 amenities +
+            // summary) is large — 4096 truncated it mid-object, producing invalid JSON.
+            maxOutputTokens: 8192,
             // Force pure-JSON output so we don't have to strip markdown fences.
             responseMimeType: 'application/json',
           },
@@ -95,22 +97,26 @@ export async function extractSheetWithGemini(
     }
 
     const data = (await response.json()) as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> }; finishReason?: string }>;
     };
 
-    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+    const candidate = data.candidates?.[0];
+    if (candidate?.finishReason && candidate.finishReason !== 'STOP') {
+      // MAX_TOKENS / SAFETY / RECITATION → output is incomplete or blocked.
+      console.warn(`[gemini] finishReason=${candidate.finishReason} — output may be truncated; attempting repair`);
+    }
+
+    const raw = candidate?.content?.parts?.[0]?.text ?? '';
     if (!raw) {
       console.warn('[gemini] Empty response');
       return EMPTY_RESULT;
     }
 
-    // responseMimeType=application/json should give clean JSON, but be defensive.
-    const text = raw.trim();
-    const jsonStr = text.startsWith('{')
-      ? text
-      : (text.match(/```(?:json)?\n?([\s\S]*?)\n?```/)?.[1] ?? text.match(/\{[\s\S]*\}/)?.[0] ?? text);
-
-    const parsed = JSON.parse(jsonStr) as ExtractionResult;
+    const parsed = parseLenientJson(raw) as ExtractionResult | null;
+    if (!parsed || typeof parsed !== 'object') {
+      console.error(`[gemini] Could not parse JSON even after repair. First 200 chars: ${raw.slice(0, 200)}`);
+      return EMPTY_RESULT;
+    }
     if (!parsed.flagged_fields) parsed.flagged_fields = [];
 
     console.log(`[gemini] Extraction OK, confidence=${parsed.overall_confidence}`);
@@ -119,4 +125,69 @@ export async function extractSheetWithGemini(
     console.error('[gemini] Unexpected error:', err);
     return EMPTY_RESULT;
   }
+}
+
+/**
+ * Tolerant JSON parser for LLM output. Tries strict parse first, then progressively
+ * repairs the common failure modes seen from Gemini:
+ *   - markdown fences ```json ... ```
+ *   - leading/trailing prose around the object
+ *   - trailing commas before } or ]
+ *   - unquoted NaN / Infinity (→ null)
+ *   - truncated output (close dangling brackets so the valid prefix parses)
+ * Returns null if nothing salvageable.
+ */
+function parseLenientJson(raw: string): unknown {
+  let s = raw.trim();
+
+  // Strip markdown fences if present.
+  const fence = s.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (fence) s = fence[1].trim();
+
+  // Narrow to the outermost object.
+  const start = s.indexOf('{');
+  if (start > 0) s = s.slice(start);
+
+  const attempts: string[] = [s];
+
+  // Repair pass 1: remove trailing commas, normalise NaN/Infinity.
+  const repaired = s
+    .replace(/,\s*([}\]])/g, '$1')
+    .replace(/\b(NaN|Infinity|-Infinity)\b/g, 'null');
+  attempts.push(repaired);
+
+  // Repair pass 2: if truncated, close any open brackets/strings on the repaired text.
+  attempts.push(closeTruncatedJson(repaired));
+
+  for (const candidate of attempts) {
+    try {
+      return JSON.parse(candidate);
+    } catch { /* try next */ }
+  }
+  return null;
+}
+
+/** Best-effort: balance unclosed strings/brackets in truncated JSON. */
+function closeTruncatedJson(s: string): string {
+  let out = s;
+  // If we're inside an unterminated string, close it.
+  const quotes = (out.match(/(?<!\\)"/g) ?? []).length;
+  if (quotes % 2 === 1) out += '"';
+  // Drop any dangling trailing comma.
+  out = out.replace(/,\s*$/, '');
+  // Close brackets in the right order using a stack.
+  const stack: string[] = [];
+  let inStr = false, esc = false;
+  for (const ch of out) {
+    if (esc) { esc = false; continue; }
+    if (ch === '\\') { esc = true; continue; }
+    if (ch === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (ch === '{' || ch === '[') stack.push(ch);
+    else if (ch === '}' || ch === ']') stack.pop();
+  }
+  while (stack.length) {
+    out += stack.pop() === '{' ? '}' : ']';
+  }
+  return out;
 }

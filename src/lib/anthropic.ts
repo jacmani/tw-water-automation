@@ -367,7 +367,11 @@ function checkSanity(result: ExtractionResult): SanityReport {
       if (ratio < 0.6 || ratio > 1.8) {
         console.warn(`[sanity] ${tower} DO total_ltrs=${doTotal} vs vol_today=${doVolToday} ratio=${ratio.toFixed(2)}`);
         violated = true;
-        corrections.push({ tower, type: 'DO', correctedTotal: doVolToday, source: 'vol_today' });
+        // BUG FIX: do NOT blindly substitute vol_today — it can itself be impossible
+        // (e.g. Venus vol_today=1,416,000). Run it through deriveCorrection so the
+        // plausibility floor/ceiling is enforced; null it if nothing is plausible.
+        const c = deriveCorrection(t.DO!, DO_CEILING, DO_FLOOR);
+        corrections.push({ tower, type: 'DO', correctedTotal: c.value, source: c.source });
       }
     }
   }

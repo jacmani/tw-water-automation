@@ -201,6 +201,10 @@ function ProgressDisplay({ status, preview }: { status: Status; preview: string 
 //   Party hall / utility:   78 – 88%
 //   Total Inflow summary:   88 – 100%
 
+// Severity drives the UX: 'review' = needs the technician's eyes (expanded, red/amber);
+// 'fixed' = the pipeline already auto-corrected it (collapsed, informational, green).
+type FlagSeverity = 'review' | 'fixed';
+
 interface FlagInfo {
   sectionY: number;   // % from top — start of highlight band
   sectionH: number;   // % height of band
@@ -208,11 +212,36 @@ interface FlagInfo {
   rowHint: string;    // which row/cell within the section
   problem: string;    // plain-English problem
   color: string;      // hex
+  severity: FlagSeverity;
+  rowKey: string;     // for de-duplication (section + row)
 }
 
 const COLORS = ['#EF4444','#F97316','#EAB308','#22C55E','#3B82F6','#A855F7','#EC4899'];
 
+// Classify a raw flag as already-handled vs needs-review.
+function classifySeverity(raw: string): FlagSeverity {
+  const r = raw.toLowerCase();
+  // Auto-handled by the pipeline → informational only.
+  if (r.includes('auto-corrected') || r.includes('auto_corrected') ||
+      r.includes('final_clamp') && !r.includes('nulled') ||
+      r.includes('tie-broken') || r.includes('tie_broken')) {
+    return 'fixed';
+  }
+  // Everything else (nulled values, low confidence, "double-check", missing data) → review.
+  return 'review';
+}
+
+// Adds severity + a dedup key on top of the section classification.
 function parseFlag(raw: string, idx: number): FlagInfo {
+  const base = parseFlagCore(raw, idx);
+  return {
+    ...base,
+    severity: classifySeverity(raw),
+    rowKey: `${base.sectionName}|${base.rowHint}`,
+  };
+}
+
+function parseFlagCore(raw: string, idx: number): Omit<FlagInfo, 'severity' | 'rowKey'> {
   const lower = raw.toLowerCase();
   const color = COLORS[idx % COLORS.length];
 
@@ -473,63 +502,107 @@ function isInternalFlag(raw: string): boolean {
   return false;
 }
 
+// De-duplicate flags by row, keeping the most severe ('review' beats 'fixed') and
+// merging their problem text. One card per affected row, not one per raw flag.
+function dedupeFlags(flags: FlagInfo[]): FlagInfo[] {
+  const byRow = new Map<string, FlagInfo>();
+  for (const f of flags) {
+    const existing = byRow.get(f.rowKey);
+    if (!existing) { byRow.set(f.rowKey, f); continue; }
+    // Prefer the review-severity version; merge distinct problem text.
+    const keep = existing.severity === 'review' ? existing : f;
+    const other = existing.severity === 'review' ? f : existing;
+    const merged = other.problem && !keep.problem.includes(other.problem)
+      ? `${keep.problem} ${other.problem}` : keep.problem;
+    byRow.set(f.rowKey, { ...keep, problem: merged, severity: 'review' === existing.severity || 'review' === f.severity ? 'review' : 'fixed' });
+  }
+  return [...byRow.values()];
+}
+
+function FlagCard({ flag, index }: { flag: FlagInfo; index: number }) {
+  const { sectionName, rowHint, problem, color, severity } = flag;
+  return (
+    <div className="rounded-xl overflow-hidden border" style={{ borderColor: color + '60' }}>
+      <div className="flex items-center gap-3 px-4 py-2.5" style={{ backgroundColor: color + '22' }}>
+        <span className="w-7 h-7 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0"
+          style={{ backgroundColor: color }}>{index}</span>
+        <span className="text-white font-semibold text-sm">{sectionName}</span>
+        {severity === 'fixed' && (
+          <span className="ml-auto text-emerald-400 text-xs font-medium">✓ auto-fixed</span>
+        )}
+      </div>
+      <div className="bg-slate-900 px-4 py-3 space-y-2">
+        <div className="flex items-start gap-2">
+          <span className="text-slate-500 text-xs mt-0.5 flex-shrink-0">📍 Row</span>
+          <span className="text-slate-200 text-sm font-medium">{rowHint}</span>
+        </div>
+        <div className="flex items-start gap-2">
+          <span className="text-slate-500 text-xs mt-0.5 flex-shrink-0">{severity === 'fixed' ? 'ℹ️ Note' : '⚠️ Check'}</span>
+          <span className="text-slate-300 text-sm leading-snug">{problem}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function FlaggedPanel({ flaggedFields, imageUrl }: { flaggedFields: string[]; imageUrl: string | null }) {
+  const [showFixed, setShowFixed] = useState(false);
   if (!flaggedFields.length) return null;
 
-  // Drop internal diagnostics, then de-duplicate identical user-facing flags.
+  // Drop internal diagnostics, classify, then de-duplicate to one card per row.
   const userFlags = Array.from(new Set(flaggedFields.filter(f => !isInternalFlag(f))));
   if (!userFlags.length) return null;
 
-  const flags = userFlags.map((f, i) => parseFlag(f, i));
+  const allFlags = dedupeFlags(userFlags.map((f, i) => parseFlag(f, i)));
+  const reviewFlags = allFlags.filter(f => f.severity === 'review');
+  const fixedFlags = allFlags.filter(f => f.severity === 'fixed');
+
+  // Reassuring summary tone (per UX audit: technician needs reassurance, not a wall of warnings).
+  const nReview = reviewFlags.length;
+  const nFixed = fixedFlags.length;
 
   return (
     <div className="space-y-4">
-      {/* Header */}
-      <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-xl p-4">
-        <p className="text-yellow-400 font-semibold text-sm mb-1">
-          ⚠️ {flags.length} area{flags.length > 1 ? 's' : ''} could not be read clearly
+      {/* Calm, reassuring summary header */}
+      <div className={`rounded-xl p-4 border ${nReview > 0 ? 'bg-amber-900/15 border-amber-700/40' : 'bg-emerald-900/15 border-emerald-700/40'}`}>
+        <p className={`font-semibold text-sm mb-1 ${nReview > 0 ? 'text-amber-300' : 'text-emerald-300'}`}>
+          {nReview > 0
+            ? `Saved — ${nReview} reading${nReview > 1 ? 's' : ''} to double-check`
+            : '✓ Saved — everything looks good'}
         </p>
         <p className="text-slate-400 text-xs">
-          The coloured bands on the sheet below show exactly which sections need checking. Find the matching number below for details.
+          {nFixed > 0 && `We auto-corrected ${nFixed} unclear value${nFixed > 1 ? 's' : ''}. `}
+          {nReview > 0
+            ? 'Please glance at the highlighted rows below against your sheet — the data is saved either way.'
+            : 'The sheet is processed and saved.'}
         </p>
       </div>
 
-      {/* Annotated image */}
-      {imageUrl && <AnnotatedCanvas imageUrl={imageUrl} flags={flags} />}
+      {/* Annotated image — only the rows that actually need review */}
+      {imageUrl && (reviewFlags.length > 0 || fixedFlags.length > 0) &&
+        <AnnotatedCanvas imageUrl={imageUrl} flags={[...reviewFlags, ...fixedFlags]} />}
 
-      {/* Per-flag cards */}
-      <div className="space-y-3">
-        {flags.map(({ sectionName, rowHint, problem, color }, i) => (
-          <div
-            key={i}
-            className="rounded-xl overflow-hidden border"
-            style={{ borderColor: color + '60' }}
+      {/* Needs-review cards — expanded */}
+      {reviewFlags.length > 0 && (
+        <div className="space-y-3">
+          {reviewFlags.map((flag, i) => <FlagCard key={flag.rowKey} flag={flag} index={i + 1} />)}
+        </div>
+      )}
+
+      {/* Auto-fixed cards — collapsed by default */}
+      {fixedFlags.length > 0 && (
+        <div className="space-y-3">
+          <button
+            onClick={() => setShowFixed(v => !v)}
+            className="w-full text-left text-xs text-slate-400 hover:text-slate-200 flex items-center gap-2 px-1"
           >
-            {/* Coloured header bar */}
-            <div className="flex items-center gap-3 px-4 py-2.5" style={{ backgroundColor: color + '22' }}>
-              <span
-                className="w-7 h-7 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0"
-                style={{ backgroundColor: color }}
-              >
-                {i + 1}
-              </span>
-              <span className="text-white font-semibold text-sm">{sectionName}</span>
-            </div>
-
-            {/* Detail */}
-            <div className="bg-slate-900 px-4 py-3 space-y-2">
-              <div className="flex items-start gap-2">
-                <span className="text-slate-500 text-xs mt-0.5 flex-shrink-0">📍 Row</span>
-                <span className="text-slate-200 text-sm font-medium">{rowHint}</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="text-slate-500 text-xs mt-0.5 flex-shrink-0">⚠️ Issue</span>
-                <span className="text-slate-300 text-sm leading-snug">{problem}</span>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
+            <span>{showFixed ? '▾' : '▸'}</span>
+            <span>{nFixed} reading{nFixed > 1 ? 's' : ''} we auto-corrected (tap to {showFixed ? 'hide' : 'review'})</span>
+          </button>
+          {showFixed && fixedFlags.map((flag, i) =>
+            <FlagCard key={flag.rowKey} flag={flag} index={reviewFlags.length + i + 1} />)}
+        </div>
+      )}
     </div>
   );
 }
