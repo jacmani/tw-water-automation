@@ -971,24 +971,37 @@ export default function UploadPage() {
               return (
                 <div className="bg-amber-900/15 border border-amber-700/40 rounded-xl p-4 space-y-3">
                   <p className="text-amber-300 font-semibold text-sm">
-                    {missing.length} reading{missing.length > 1 ? 's' : ''} couldn&apos;t be read — please enter {missing.length > 1 ? 'them' : 'it'} from your sheet
+                    {missing.length} reading{missing.length > 1 ? 's' : ''} couldn&apos;t be read — please copy {missing.length > 1 ? 'them' : 'it'} from your sheet
                   </p>
-                  <p className="text-slate-400 text-xs">These are required before saving so the dashboard stays accurate.</p>
+                  <p className="text-slate-400 text-xs">
+                    On your Trinity World log book, find the row below in the top <span className="text-slate-300 font-medium">METER READING</span> table and type the value from the <span className="text-slate-300 font-medium">&ldquo;TOTAL IN LTRS&rdquo;</span> column.
+                  </p>
                   {missing.map(m => (
-                    <div key={m.key} className="flex items-center gap-3">
-                      <label className="text-slate-200 text-sm flex-1">
-                        {m.tower} — {m.type === 'DO' ? 'Domestic (overhead)' : 'Drinking water'}
-                      </label>
-                      <input
-                        type="number"
-                        inputMode="numeric"
-                        placeholder="Litres"
-                        value={manualTotals[m.key] ?? ''}
-                        onChange={e => setManualTotals(prev => ({ ...prev, [m.key]: e.target.value }))}
-                        className="w-32 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm text-right focus:border-blue-500 focus:outline-none"
-                      />
+                    <div key={m.key} className="bg-slate-900/60 rounded-lg p-3 space-y-1.5">
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1">
+                          {/* Row name EXACTLY as printed on the sheet, e.g. "VENUS DO" */}
+                          <p className="text-white text-sm font-bold tracking-wide">
+                            {m.tower.toUpperCase()} {m.type}
+                          </p>
+                          <p className="text-slate-400 text-[11px] mt-0.5">
+                            Row &ldquo;{m.tower.toUpperCase()} {m.type}&rdquo; · {m.type === 'DO' ? 'Domestic / Overhead' : 'Drinking water'} · <span className="text-amber-300/90">TOTAL IN LTRS</span> column
+                          </p>
+                        </div>
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          placeholder="e.g. 141600"
+                          value={manualTotals[m.key] ?? ''}
+                          onChange={e => setManualTotals(prev => ({ ...prev, [m.key]: e.target.value }))}
+                          className="w-32 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm text-right focus:border-blue-500 focus:outline-none"
+                        />
+                      </div>
                     </div>
                   ))}
+                  <p className="text-slate-500 text-[11px]">
+                    💡 Use the photo above to match the row. Enter the number exactly as written (e.g. 1,41,600 → type 141600).
+                  </p>
                   {!allFilled && <p className="text-amber-400/70 text-xs">Enter all values to enable Save.</p>}
                 </div>
               );
