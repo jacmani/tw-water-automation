@@ -275,10 +275,46 @@ async function runExtraction(
   return parsed;
 }
 
+// Physical ceilings — values above these are impossible for this complex.
+const DO_CEILING = 300_000; // DO range max is 250,000 L
+const DR_CEILING = 80_000;  // DR range max is 40,000 L
+
 interface SanityReport {
   violated: boolean;
-  /** Fields that can be auto-corrected: tower → corrected total_ltrs */
-  corrections: Array<{ tower: string; type: 'DO' | 'DR'; correctedTotal: number; source: string }>;
+  /** Fields that can be auto-corrected: tower → corrected total_ltrs.
+   *  correctedTotal === null means "could not derive a safe value — null it and flag". */
+  corrections: Array<{ tower: string; type: 'DO' | 'DR'; correctedTotal: number | null; source: string }>;
+}
+
+/**
+ * Pick the best correction for an impossible tower total, in priority order:
+ *   1. vol_today, if it's an independent in-range reading
+ *   2. meter delta (r_today − r_yesterday), if positive and in-range
+ *   3. value / 10, if the over-read is a clean 10× place-value slip (Indian comma error)
+ *   4. null — give up, force manual review
+ */
+function deriveCorrection(
+  row: { total_ltrs: number | null; vol_today: number | null; r_today: number | null; r_yesterday: number | null },
+  ceiling: number
+): { value: number | null; source: string } {
+  const { total_ltrs, vol_today, r_today, r_yesterday } = row;
+
+  // 1. vol_today — independent column
+  if (vol_today != null && vol_today > 0 && vol_today <= ceiling) {
+    return { value: vol_today, source: 'vol_today' };
+  }
+  // 2. meter delta — fully independent of the total cell
+  if (r_today != null && r_yesterday != null) {
+    const delta = r_today - r_yesterday;
+    if (delta > 0 && delta <= ceiling) return { value: delta, source: 'meter_delta(r_today-r_yesterday)' };
+  }
+  // 3. clean 10× place-value slip (e.g. 1,416,000 → 141,600)
+  if (total_ltrs != null) {
+    const div10 = Math.round(total_ltrs / 10);
+    if (div10 > 0 && div10 <= ceiling) return { value: div10, source: 'divided_by_10(place_value_slip)' };
+  }
+  // 4. give up — null it, force manual entry
+  return { value: null, source: 'unrecoverable_nulled_for_manual_review' };
 }
 
 /**
@@ -298,26 +334,32 @@ function checkSanity(result: ExtractionResult): SanityReport {
     const t = towers[tower];
     if (!t) continue;
 
-    // DR total_ltrs > 80,000 L is impossible (range max is 40,000)
-    if (t.DR?.total_ltrs != null && t.DR.total_ltrs > 80_000) {
-      console.warn(`[sanity] ${tower} DR total_ltrs=${t.DR.total_ltrs} > 80k`);
+    // ── Hard ceiling: DR > 80k is impossible. ALWAYS derive a correction. ──
+    if (t.DR?.total_ltrs != null && t.DR.total_ltrs > DR_CEILING) {
+      const c = deriveCorrection(t.DR, DR_CEILING);
+      console.warn(`[sanity] ${tower} DR total_ltrs=${t.DR.total_ltrs} > ${DR_CEILING} → correct to ${c.value} via ${c.source}`);
       violated = true;
-    }
-    // DO total_ltrs > 300,000 L is impossible (range max is 250,000)
-    if (t.DO?.total_ltrs != null && t.DO.total_ltrs > 300_000) {
-      console.warn(`[sanity] ${tower} DO total_ltrs=${t.DO.total_ltrs} > 300k`);
-      violated = true;
+      corrections.push({ tower, type: 'DR', correctedTotal: c.value, source: c.source });
     }
 
-    // DO: total_ltrs vs vol_today cross-check (they should be within 40% of each other)
+    // ── Hard ceiling: DO > 300k is impossible. ALWAYS derive a correction. ──
+    if (t.DO?.total_ltrs != null && t.DO.total_ltrs > DO_CEILING) {
+      const c = deriveCorrection(t.DO, DO_CEILING);
+      console.warn(`[sanity] ${tower} DO total_ltrs=${t.DO.total_ltrs} > ${DO_CEILING} → correct to ${c.value} via ${c.source}`);
+      violated = true;
+      corrections.push({ tower, type: 'DO', correctedTotal: c.value, source: c.source });
+    }
+
+    // ── DO cross-check: total_ltrs vs vol_today should be within ~40%. ──
+    // Only add a correction here if the ceiling check above didn't already add one.
     const doTotal = t.DO?.total_ltrs;
     const doVolToday = t.DO?.vol_today;
-    if (doTotal != null && doVolToday != null && doVolToday > 0) {
+    const alreadyCorrectedDO = corrections.some(c => c.tower === tower && c.type === 'DO');
+    if (!alreadyCorrectedDO && doTotal != null && doVolToday != null && doVolToday > 0) {
       const ratio = doTotal / doVolToday;
       if (ratio < 0.6 || ratio > 1.8) {
         console.warn(`[sanity] ${tower} DO total_ltrs=${doTotal} vs vol_today=${doVolToday} ratio=${ratio.toFixed(2)}`);
         violated = true;
-        // vol_today is an independent column — use it as a correction hint
         corrections.push({ tower, type: 'DO', correctedTotal: doVolToday, source: 'vol_today' });
       }
     }
@@ -336,14 +378,46 @@ function applyCorrections(result: ExtractionResult, corrections: SanityReport['c
     const row = result.tower_section?.[tower as 'Venus'|'Mercury'|'Neptune'|'Jupiter']?.[type];
     if (!row) continue;
     console.warn(`[sanity] auto-correcting ${tower} ${type} total_ltrs: ${row.total_ltrs} → ${correctedTotal} (from ${source})`);
-    row.total_ltrs = correctedTotal;
-    row.confidence = 0.65; // flagged — human should verify
+    row.total_ltrs = correctedTotal; // may be null = unrecoverable, needs manual entry
+    // null correction = could not derive a safe value → lower confidence harder.
+    row.confidence = correctedTotal === null ? 0.4 : 0.65;
     result.flagged_fields = [
       ...(result.flagged_fields ?? []),
-      `${tower}_${type}_total_ltrs: auto-corrected from ${source} (both Haiku and Opus disagreed with ${source})`,
+      `${tower}_${type}_total_ltrs: ${correctedTotal === null ? 'NULLED — unrecoverable, needs manual entry' : `auto-corrected to ${correctedTotal}`} (via ${source})`,
     ];
   }
-  result.overall_confidence = Math.min(result.overall_confidence, 0.70);
+  result.overall_confidence = Math.min(result.overall_confidence, 0.60);
+  return result;
+}
+
+/**
+ * FINAL HARD CLAMP — last line of defense before any result is returned.
+ * Guarantees no physically-impossible tower total ever reaches the DB, regardless of
+ * which engine produced it or whether earlier escalation/correction logic ran.
+ * This is the safety net whose absence let Venus DO=1,416,000 L through.
+ */
+function enforceHardCeilings(result: ExtractionResult): ExtractionResult {
+  const towers = result.tower_section;
+  if (!towers) return result;
+  for (const tower of ['Venus', 'Mercury', 'Neptune', 'Jupiter'] as const) {
+    const t = towers[tower];
+    if (!t) continue;
+    for (const type of ['DO', 'DR'] as const) {
+      const row = t[type];
+      const ceiling = type === 'DO' ? DO_CEILING : DR_CEILING;
+      if (row?.total_ltrs != null && row.total_ltrs > ceiling) {
+        const c = deriveCorrection(row, ceiling);
+        console.warn(`[clamp] ${tower} ${type} STILL impossible (${row.total_ltrs}) after pipeline → forcing ${c.value} via ${c.source}`);
+        row.total_ltrs = c.value;
+        row.confidence = Math.min(row.confidence ?? 1, c.value === null ? 0.4 : 0.5);
+        result.flagged_fields = [
+          ...(result.flagged_fields ?? []),
+          `${tower}_${type}_total_ltrs: FINAL_CLAMP ${c.value === null ? 'NULLED' : `→ ${c.value}`} (via ${c.source})`,
+        ];
+        result.overall_confidence = Math.min(result.overall_confidence, 0.55);
+      }
+    }
+  }
   return result;
 }
 
@@ -494,8 +568,22 @@ async function runPrimaryExtraction(
  *
  * Key principle: never trust a lone confidence score — the agreement gate is the
  * accept/reject decision. A single model can confidently misread 1↔7.
+ *
+ * Public wrapper: ALWAYS applies enforceHardCeilings to the result, so no
+ * physically-impossible value can reach the DB via any internal return path.
  */
 export async function extractSheetData(
+  base64Image: string,
+  mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
+  qwenResult?: QwenVisionResult,
+  mistralOcr?: MistralOcrResult,
+  cost?: CostTracker
+): Promise<ExtractionResult> {
+  const result = await extractSheetDataInner(base64Image, mediaType, qwenResult, mistralOcr, cost);
+  return enforceHardCeilings(result);
+}
+
+async function extractSheetDataInner(
   base64Image: string,
   mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
   qwenResult?: QwenVisionResult,
