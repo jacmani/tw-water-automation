@@ -207,6 +207,20 @@ Return ONLY a valid JSON object — no markdown, no explanation. Use null for bl
   "flagged_fields": []
 }`;
 
+/** Token usage from a Claude call, used by the cost tracker. */
+export interface ClaudeUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_input_tokens?: number;
+}
+
+// Captures the usage of the most recent runExtraction call so callers can cost it
+// without threading the raw SDK response everywhere.
+let lastClaudeUsage: ClaudeUsage | undefined;
+export function getLastClaudeUsage(): ClaudeUsage | undefined {
+  return lastClaudeUsage;
+}
+
 async function runExtraction(
   base64Image: string,
   mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
@@ -239,6 +253,13 @@ async function runExtraction(
       },
     ],
   });
+
+  // Capture token usage for cost reporting (input + output + cache reads).
+  lastClaudeUsage = {
+    input_tokens: response.usage?.input_tokens,
+    output_tokens: response.usage?.output_tokens,
+    cache_read_input_tokens: (response.usage as { cache_read_input_tokens?: number })?.cache_read_input_tokens,
+  };
 
   const content = response.content[0];
   if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
@@ -330,6 +351,7 @@ import type { QwenVisionResult } from './qwenVision';
 import type { MistralOcrResult } from './mistralOcr';
 import { extractSheetWithGemini } from './geminiVision';
 import { extractTowerTotalsWithOpenRouter, type OpenRouterVisionResult } from './openRouterVision';
+import { CostTracker } from './costTracker';
 
 /** A generic tower-total reading from any independent engine. */
 interface TowerTotalReading {
@@ -429,22 +451,26 @@ function resolveWithTieBreaker(
 async function runPrimaryExtraction(
   base64Image: string,
   mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
-  ocrTranscript?: string
+  ocrTranscript?: string,
+  cost?: CostTracker
 ): Promise<{ result: ExtractionResult; engine: string }> {
   if (EXTRACTION_PRIMARY === 'gemini') {
     const gemini = await extractSheetWithGemini(base64Image, mediaType, ocrTranscript);
     if (gemini.success && gemini.result) {
       console.log(`[extraction] PRIMARY=Gemini (free), confidence=${gemini.result.overall_confidence}`);
+      cost?.addFree('Gemini 2.5 Flash (primary)', 'free tier');
       return { result: gemini.result, engine: 'gemini' };
     }
     // Gemini unavailable → fall back to Haiku as primary so uploads never dead-end.
     console.warn('[extraction] Gemini primary unavailable → falling back to Haiku as primary');
     const haiku = await runExtraction(base64Image, mediaType, HAIKU_MODEL, ocrTranscript);
+    cost?.addClaude('Claude Haiku (primary fallback)', getLastClaudeUsage());
     return { result: haiku, engine: 'haiku-primary-fallback' };
   }
 
   const haiku = await runExtraction(base64Image, mediaType, HAIKU_MODEL, ocrTranscript);
   console.log(`[extraction] PRIMARY=Haiku, confidence=${haiku.overall_confidence}`);
+  cost?.addClaude('Claude Haiku (primary)', getLastClaudeUsage());
   return { result: haiku, engine: 'haiku' };
 }
 
@@ -473,12 +499,17 @@ export async function extractSheetData(
   base64Image: string,
   mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
   qwenResult?: QwenVisionResult,
-  mistralOcr?: MistralOcrResult
+  mistralOcr?: MistralOcrResult,
+  cost?: CostTracker
 ): Promise<ExtractionResult> {
   const ocrTranscript = mistralOcr?.success ? mistralOcr.markdown : undefined;
 
+  // Record the free engines that already ran in Phase 1 (parallel, by the route).
+  if (qwenResult?.success) cost?.addFree('Qwen3-VL-8B (validator)', 'free tier');
+  if (mistralOcr?.success) cost?.addFree('Mistral OCR 3 (transcript)', 'free/near-free');
+
   // ── Phase 2.1: primary extraction (free Gemini by default) ──────────────────
-  const { result, engine } = await runPrimaryExtraction(base64Image, mediaType, ocrTranscript);
+  const { result, engine } = await runPrimaryExtraction(base64Image, mediaType, ocrTranscript, cost);
   result.flagged_fields = [...(result.flagged_fields ?? []), `primary_engine:${engine}`];
 
   // ── Phase 2.2: agreement gate — does an independent free engine confirm it? ──
@@ -498,6 +529,7 @@ export async function extractSheetData(
   let stillNeedsPaid = sanity.violated || lowConfidence;
   if (qwenDisagreements.length > 0 && qwenResult) {
     const openRouter = await extractTowerTotalsWithOpenRouter(base64Image, mediaType);
+    if (openRouter.success) cost?.addFree('OpenRouter (tie-breaker)', 'free tier');
     const { resolved, unresolved } = resolveWithTieBreaker(result, qwenResult, openRouter);
     if (unresolved === -1) {
       console.log('[extraction] Tie-breaker unavailable — disagreements remain → paid escalation');
@@ -521,6 +553,7 @@ export async function extractSheetData(
   // ── Phase 2.4: PAID escalation to Claude Haiku (last resort — NO Opus) ───────
   console.log('[extraction] Escalating to Claude Haiku (paid, last resort)');
   const haikuResult = await runExtraction(base64Image, mediaType, HAIKU_MODEL, ocrTranscript);
+  cost?.addClaude('Claude Haiku (escalation)', getLastClaudeUsage());
   console.log(`[extraction] Haiku escalation confidence=${haikuResult.overall_confidence}`);
 
   const reasons: string[] = [];

@@ -14,6 +14,7 @@ import { extractTextWithOcrSpace } from '@/lib/ocrSpace';
 import { extractTowerTotalsWithQwen } from '@/lib/qwenVision';
 import { extractTextWithMistralOcr } from '@/lib/mistralOcr';
 import { validateExtraction } from '@/lib/extractionValidator';
+import { CostTracker } from '@/lib/costTracker';
 
 const DATE_CONFIDENCE_THRESHOLD = 0.8;
 
@@ -98,51 +99,70 @@ export async function POST(request: NextRequest) {
         log('success', 'Image stored', `${(buffer.length / 1024).toFixed(0)} KB`);
 
         const base64 = buffer.toString('base64');
+        const cost = new CostTracker();
+
+        // Free OCR/word engines record as ₹0 so the cost card shows the full roster.
+        cost.addFree('Google Vision (date/number)', 'free tier');
+        cost.addFree('OCR.space Engine 2', 'free tier');
 
         // ── Step 2: All parallel engines ──────────────────────────────────────
-        log('info', 'Starting parallel engines: Qwen3-VL + Mistral OCR 3 + Google Vision + OCR.space…');
+        log('info', 'Phase 1 — running 4 free engines in parallel', 'Qwen3-VL · Mistral OCR 3 · Google Vision · OCR.space');
 
         const [qwenResult, mistralOcrResult, visionResult, ocrSpaceResult] = await Promise.all([
-          extractTowerTotalsWithQwen(base64, mediaType).then(r => {
+          (async () => {
+            const t0 = Date.now();
+            const r = await extractTowerTotalsWithQwen(base64, mediaType);
+            const ms = Date.now() - t0;
             if (r.success && r.readings.length > 0) {
               const summary = r.readings
                 .map(x => `${x.tower} ${x.type}=${x.total_ltrs != null ? (x.total_ltrs/1000).toFixed(0)+'kL' : '?'}`)
                 .join(', ');
-              log('engine', 'Qwen3-VL-8B ✓', summary);
+              log('engine', `Qwen3-VL-8B ✓ (free, ${ms}ms)`, summary);
             } else {
               log('warn', 'Qwen3-VL-8B — no result', process.env.HF_TOKEN ? 'API returned empty' : 'HF_TOKEN not configured');
             }
             return r;
-          }),
-          extractTextWithMistralOcr(base64, mediaType).then(r => {
+          })(),
+          (async () => {
+            const t0 = Date.now();
+            const r = await extractTextWithMistralOcr(base64, mediaType);
+            const ms = Date.now() - t0;
             if (r.success) {
-              log('engine', 'Mistral OCR 3 ✓', `${r.markdown.length} chars extracted (handwriting specialist)`);
+              log('engine', `Mistral OCR 3 ✓ (free, ${ms}ms)`, `${r.markdown.length} chars transcribed — handwriting specialist, injected into primary`);
             } else {
               log('warn', 'Mistral OCR 3 — no result', process.env.MISTRAL_API_KEY ? 'API returned empty' : 'MISTRAL_API_KEY not configured');
             }
             return r;
-          }),
-          extractTextFromImage(base64).then(r => {
+          })(),
+          (async () => {
+            const t0 = Date.now();
+            const r = await extractTextFromImage(base64);
+            const ms = Date.now() - t0;
             if (r.words.length > 0) {
-              log('engine', `Google Vision ✓`, `${r.words.length} words extracted${r.detectedDate ? ', date: ' + r.detectedDate : ''}`);
+              log('engine', `Google Vision ✓ (free, ${ms}ms)`, `${r.words.length} words${r.detectedDate ? ', date: ' + r.detectedDate : ''}`);
             } else {
               log('warn', 'Google Vision — no text', process.env.GOOGLE_CLOUD_VISION_API_KEY ? 'Empty result' : 'API key not configured');
             }
             return r;
-          }),
-          extractTextWithOcrSpace(base64, mediaType).then(r => {
+          })(),
+          (async () => {
+            const t0 = Date.now();
+            const r = await extractTextWithOcrSpace(base64, mediaType);
+            const ms = Date.now() - t0;
             if (r.words.length > 0) {
-              log('engine', `OCR.space Engine 2 ✓`, `${r.words.length} words extracted${r.detectedDate ? ', date: ' + r.detectedDate : ''}`);
+              log('engine', `OCR.space Engine 2 ✓ (free, ${ms}ms)`, `${r.words.length} words${r.detectedDate ? ', date: ' + r.detectedDate : ''}`);
             } else {
               log('warn', 'OCR.space — no text', process.env.OCR_SPACE_API_KEY ? 'Empty result' : 'API key not configured');
             }
             return r;
-          }),
+          })(),
         ]);
 
         // ── Step 3: Cost-inverted extraction (free Gemini primary, Haiku last resort) ──
-        log('info', `Extracting all sheet data (free engines first)${mistralOcrResult.success ? ' (with Mistral OCR hint)' : ''}…`);
-        const extracted = await extractSheetData(base64, mediaType, qwenResult, mistralOcrResult);
+        log('info', `Phase 2 — primary extraction (free Gemini first)${mistralOcrResult.success ? ' + Mistral OCR hint' : ''}…`);
+        const extractStart = Date.now();
+        const extracted = await extractSheetData(base64, mediaType, qwenResult, mistralOcrResult, cost);
+        const extractMs = Date.now() - extractStart;
 
         // Report which engine produced the final result, from flagged_fields markers.
         const fields = extracted.flagged_fields ?? [];
@@ -153,17 +173,25 @@ export async function POST(request: NextRequest) {
         const conf = `confidence ${(extracted.overall_confidence * 100).toFixed(0)}%`;
 
         const primaryLabel = primaryEngine.startsWith('gemini') ? 'Gemini 2.5 Flash (free)' : 'Claude Haiku';
+        // Show the 8 tower totals the final result settled on — full depth.
+        const towerSummary = (['Venus','Mercury','Neptune','Jupiter'] as const)
+          .flatMap(tw => (['DO','DR'] as const).map(ty => {
+            const v = extracted.tower_section?.[tw]?.[ty]?.total_ltrs;
+            return `${tw[0]}${ty}=${v != null ? (v/1000).toFixed(0)+'k' : '?'}`;
+          })).join(' ');
+
         if (escalated) {
           const reason = fields.find(f => f.startsWith('escalation_reason:'))?.replace('escalation_reason:', '') ?? '';
-          log('warn', `Free engines disagreed — escalated to Claude Haiku (paid)`, reason);
+          log('warn', `Agreement gate FAILED — escalating to Claude Haiku (paid)`, `reason: ${reason}`);
           log(autoFixed ? 'warn' : 'success',
-            autoFixed ? 'Claude Haiku ✓ (with auto-correction)' : 'Claude Haiku ✓',
+            autoFixed ? 'Claude Haiku ✓ (with auto-correction)' : `Claude Haiku ✓ (${extractMs}ms total)`,
             autoFixed ? 'Escalation also failed sanity — vol_today used as source of truth' : conf);
         } else if (tieBroken) {
-          log('success', `Resolved by free tie-breaker (OpenRouter)`, `2 of 3 free engines agreed — no paid call, ${conf}`);
+          log('success', `Resolved by free tie-breaker (OpenRouter)`, `2 of 3 free engines agreed — no paid call · ${conf}`);
         } else {
-          log('success', `${primaryLabel} ✓`, `Qwen3-VL agrees — ${conf}, no paid escalation`);
+          log('success', `${primaryLabel} ✓ — agreement gate PASSED`, `Qwen3-VL agrees, sanity OK · ${conf} · no paid call`);
         }
+        log('info', 'Final tower totals', towerSummary);
 
         // ── Step 4: Validation ────────────────────────────────────────────────
         const validation = validateExtraction(extracted, visionResult, ocrSpaceResult);
@@ -182,7 +210,19 @@ export async function POST(request: NextRequest) {
 
         const visionValidated = visionResult.words.length > 0 || (ocrSpaceResult?.words.length ?? 0) > 0;
 
-        // ── Step 5: Done ──────────────────────────────────────────────────────
+        // ── Step 5: Cost summary (USD → INR) ──────────────────────────────────
+        const costJson = cost.toJSON();
+        log('info', '─── Scan cost breakdown ───');
+        for (const e of costJson.breakdown) {
+          log(e.paid ? 'warn' : 'engine',
+            `${e.engine}: ${CostTracker.formatInr(e.inr)}`,
+            e.detail ?? (e.paid ? 'paid' : 'free'));
+        }
+        log(costJson.paid_calls === 0 ? 'success' : 'info',
+          `💰 Total this scan: ${cost.summaryLine()}`,
+          `@ ₹${costJson.usd_to_inr}/USD · $${costJson.total_usd.toFixed(6)}`);
+
+        // ── Step 6: Done ──────────────────────────────────────────────────────
         const dateUnclear = !extracted.date || (extracted.date_confidence ?? 0) < DATE_CONFIDENCE_THRESHOLD;
         log('info', 'Preparing result…');
 
@@ -196,6 +236,7 @@ export async function POST(request: NextRequest) {
             date_unclear: dateUnclear,
             extraction: extracted,
             visionValidated,
+            cost: costJson,
           },
         });
 
