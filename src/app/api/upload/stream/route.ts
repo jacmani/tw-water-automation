@@ -191,7 +191,20 @@ export async function POST(request: NextRequest) {
         } else {
           log('success', `${primaryLabel} ✓ — agreement gate PASSED`, `Qwen3-VL agrees, sanity OK · ${conf} · no paid call`);
         }
-        log('info', 'Final tower totals', towerSummary);
+        log('info', 'Final tower totals (kL)', towerSummary);
+
+        // ── Full transparency: dump every tower row with its confidence ──────────
+        for (const tw of ['Venus','Mercury','Neptune','Jupiter'] as const) {
+          for (const ty of ['DO','DR'] as const) {
+            const row = extracted.tower_section?.[tw]?.[ty];
+            if (!row) continue;
+            const v = row.total_ltrs;
+            const cf = row.confidence != null ? `${(row.confidence*100).toFixed(0)}%` : '—';
+            log('engine', `${tw.toUpperCase()} ${ty}: ${v != null ? v.toLocaleString('en-IN') + ' L' : 'NOT READ'}`,
+              `TOTAL IN LTRS · confidence ${cf}`);
+          }
+        }
+        log('info', `Date read: ${extracted.date ?? 'unclear'}`, `date confidence ${((extracted.date_confidence ?? 0)*100).toFixed(0)}%`);
 
         // ── Step 4: Validation ────────────────────────────────────────────────
         const validation = validateExtraction(extracted, visionResult, ocrSpaceResult);
@@ -224,6 +237,8 @@ export async function POST(request: NextRequest) {
 
         // ── Step 6: Done ──────────────────────────────────────────────────────
         const dateUnclear = !extracted.date || (extracted.date_confidence ?? 0) < DATE_CONFIDENCE_THRESHOLD;
+        const totalSec = ((Date.now() - startMs) / 1000).toFixed(1);
+        log('success', `✓ Done in ${totalSec}s`, `extraction phase ${(extractMs/1000).toFixed(1)}s`);
         log('info', 'Preparing result…');
 
         send({

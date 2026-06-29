@@ -63,9 +63,13 @@ export async function extractSheetWithGemini(
     : '';
 
   try {
+    // Hard timeout so a slow Gemini response can't stall the whole pipeline.
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 30_000);
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${apiKey}`,
       {
+        signal: ac.signal,
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -89,6 +93,7 @@ export async function extractSheetWithGemini(
         }),
       }
     );
+    clearTimeout(timer);
 
     if (!response.ok) {
       const err = await response.text();

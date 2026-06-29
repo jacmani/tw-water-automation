@@ -56,7 +56,7 @@ function ProcessingLog({ entries }: { entries: LogEntry[] }) {
         <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
         <span className="text-slate-400 text-xs font-semibold uppercase tracking-wider">Live Processing Log</span>
       </div>
-      <div className="px-4 py-3 space-y-1.5 font-mono text-xs max-h-52 overflow-y-auto scrollbar-thin">
+      <div className="px-4 py-3 space-y-1.5 font-mono text-xs max-h-96 overflow-y-auto scrollbar-thin">
         {entries.map((e) => (
           <div key={e.id} className="flex items-start gap-2">
             <span className="flex-shrink-0 w-4 text-center">{LEVEL_ICON[e.level]}</span>
