@@ -43,13 +43,13 @@ export default function TowerCard({ data }: Props) {
             <p className="text-xl font-bold text-slate-300 dark:text-slate-600 leading-none">No data</p>
           )}
           {hasData && (
-            <p className="text-slate-400 dark:text-slate-400 text-xs mt-0.5">yesterday</p>
+            <p className="text-slate-400 dark:text-slate-400 text-xs mt-0.5">Today</p>
           )}
         </div>
 
         <div className="space-y-1 text-xs text-slate-500 dark:text-slate-400">
           <div className="flex justify-between">
-            <span>2 Days Ago</span>
+            <span>Yesterday</span>
             <span className="text-slate-700 dark:text-slate-300">{formatLitres(total_yesterday)}</span>
           </div>
           <div className="flex justify-between">
