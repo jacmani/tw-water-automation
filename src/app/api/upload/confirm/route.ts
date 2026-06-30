@@ -242,6 +242,20 @@ function sourceSlug(location: string): string | null {
   return null;
 }
 
+// Normalise an extracted amenity meter name to a value allowed by the
+// amenity_meter_readings.location CHECK constraint (Jupiter/Mercury/Venus/Neptune,
+// 'Meter 1'..'Meter 7'). Returns null if it can't be mapped (skip rather than 400).
+function normaliseAmenityLocation(name: string | null | undefined): string | null {
+  if (!name) return null;
+  const t = name.trim();
+  // Car wash towers — already valid as-is.
+  if (['Jupiter', 'Mercury', 'Venus', 'Neptune'].includes(t)) return t;
+  // Swimming pool: "METER-1" / "Meter-1" / "meter 1" → "Meter 1"
+  const m = t.match(/meter[\s-]*([1-7])/i);
+  if (m) return `Meter ${m[1]}`;
+  return null; // anything else (Party Hall meters etc.) isn't a dashboard amenity
+}
+
 /**
  * Mirror a photo-upload extraction into the logbook data model (daily_log + child
  * tables) so the /logbook page reflects photo uploads, not just manual entries.
@@ -300,19 +314,31 @@ async function mirrorToLogbook(
   }
 
   // 4. Amenity meter readings (Car Wash + Swimming Pool → amenity_meter_readings)
+  // The photo sheet prints Swimming Pool meters as "METER-1/2/3" (hyphen), but the
+  // amenity_meter_readings.location CHECK constraint only allows "Meter 1/2/3" (space).
+  // Normalise so the upsert passes the constraint AND matches the dashboard's keys —
+  // previously every Swimming Pool row silently failed the 400 and the dashboard
+  // showed "No amenity data for this date".
   const amenityRows = (extraction.amenities ?? [])
     .filter((a) => a.section === 'Car Wash' || a.section === 'Swimming Pool')
     .map((a) => ({
       log_date: date,
       amenity_type: a.section,
-      location: a.meter_name,
+      location: normaliseAmenityLocation(a.meter_name),
       yesterday: a.y_day ?? null,
       today: a.r_day ?? null,
       consumption: a.diff ?? null,
-      cumulative: a.cumulative ?? null,
-    }));
+      cumulative: null,
+    }))
+    .filter((r) => r.location !== null) as Array<{
+      log_date: string; amenity_type: string; location: string;
+      yesterday: number | null; today: number | null; consumption: number | null; cumulative: number | null;
+    }>;
   if (amenityRows.length > 0) {
-    await supabase.from('amenity_meter_readings').upsert(amenityRows, { onConflict: 'log_date,amenity_type,location' });
+    const { error } = await supabase
+      .from('amenity_meter_readings')
+      .upsert(amenityRows, { onConflict: 'log_date,amenity_type,location' });
+    if (error) console.error('[mirror] amenity_meter_readings upsert error:', error);
   }
 
   // 4b. Party Hall → utility_meters (wide table: one row per date, one column per meter)

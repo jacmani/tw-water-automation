@@ -95,12 +95,20 @@ async function main() {
       } : null;
     }).filter(Boolean);
 
+    const normLoc = (name) => {
+      if (!name) return null;
+      const t = String(name).trim();
+      if (['Jupiter', 'Mercury', 'Venus', 'Neptune'].includes(t)) return t;
+      const m = t.match(/meter[\s-]*([1-7])/i);
+      return m ? `Meter ${m[1]}` : null;
+    };
     const amenityRows = amenities
       .filter((a) => a.section === 'Car Wash' || a.section === 'Swimming Pool')
       .map((a) => ({
-        log_date: date, amenity_type: a.section, location: a.meter_name,
+        log_date: date, amenity_type: a.section, location: normLoc(a.meter_name),
         yesterday: a.y_day, today: a.r_day, consumption: a.diff, cumulative: null,
-      }));
+      }))
+      .filter((r) => r.location !== null);
 
     const bySlot = {};
     for (const lvl of levels) {
