@@ -198,7 +198,7 @@ function ProgressDisplay({ status, preview }: { status: Status; preview: string 
         ))}
       </div>
       <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
-        <div className="h-full bg-gradient-to-r from-blue-600 to-blue-400 rounded-full transition-all duration-700 ease-out"
+        <div className="h-full bg-blue-500 rounded-full transition-all duration-700 ease-out"
           style={{ width: `${overallPct}%` }} />
       </div>
       <p className="text-center text-slate-400 text-sm">
@@ -1075,27 +1075,27 @@ export default function UploadPage() {
         {status === 'idle' && (
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
-              <label className="block text-slate-300 text-sm font-medium mb-2">Sheet Photo</label>
+              <label className="block text-slate-700 dark:text-slate-300 text-sm font-medium mb-2">Daily Water Sheet</label>
               {preview ? (
-                <div className="relative rounded-xl overflow-hidden bg-slate-800 border border-slate-700">
+                <div className="relative rounded-xl overflow-hidden bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
                   <Image src={preview} alt="Sheet preview" width={400} height={300} className="w-full object-contain max-h-72" unoptimized />
                   <button type="button" onClick={resetToIdle} className="absolute top-2 right-2 bg-slate-900/80 hover:bg-slate-800 text-white rounded-full w-8 h-8 flex items-center justify-center text-sm">✕</button>
                 </div>
               ) : (
-                <label className="flex flex-col items-center justify-center w-full h-48 bg-slate-800 border-2 border-dashed border-slate-600 rounded-xl cursor-pointer hover:border-blue-500 hover:bg-slate-800/80 transition-colors">
+                <label className="flex flex-col items-center justify-center w-full h-48 bg-white dark:bg-slate-800 border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-xl cursor-pointer hover:border-blue-400 dark:hover:border-blue-500 hover:bg-blue-50/50 dark:hover:bg-slate-800/80 transition-colors">
                   <div className="text-center px-4">
                     <div className="text-4xl mb-2">📷</div>
-                    <p className="text-slate-300 font-medium text-sm">Tap to take photo or choose file</p>
-                    <p className="text-slate-500 text-xs mt-1">JPG, PNG, HEIC accepted</p>
+                    <p className="text-slate-700 dark:text-slate-300 font-medium text-sm">Tap to photograph today&apos;s water sheet</p>
+                    <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">JPG, PNG or HEIC accepted</p>
                   </div>
                   <input ref={fileInputRef} type="file" accept="image/*" capture="environment" onChange={handleFileChange} className="hidden" required />
                 </label>
               )}
             </div>
-            <button type="submit" disabled={!file} className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:cursor-not-allowed text-white font-semibold py-4 rounded-xl text-base transition-colors">
-              Submit Sheet
+            <button type="submit" disabled={!file} className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-slate-200 dark:disabled:bg-slate-700 disabled:cursor-not-allowed text-white disabled:text-slate-400 font-semibold py-4 rounded-xl text-base transition-colors">
+              Upload Sheet
             </button>
-            <p className="text-slate-500 text-xs text-center">No login required. Date is read automatically from the sheet.</p>
+            <p className="text-slate-400 dark:text-slate-500 text-xs text-center">No login needed. AI reads the date automatically.</p>
             <div className="border-t border-slate-800 pt-4 text-center">
               <p className="text-slate-500 text-xs mb-2">Prefer to enter data manually?</p>
               <Link href="/upload/logbook" className="inline-block text-sm text-blue-400 hover:text-blue-300 border border-blue-800 hover:border-blue-600 rounded-lg px-4 py-2 transition-colors">
