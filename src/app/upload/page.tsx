@@ -119,6 +119,7 @@ interface ConfirmPayload {
   date_unclear: boolean;
   extraction: ExtractionResult;
   date_was_manual?: boolean;       // true if the technician picked the date by hand
+  pipeline_metrics?: object;       // OCR pipeline telemetry — stored in DB for trend analysis
 }
 
 interface SaveResult {
@@ -848,6 +849,7 @@ export default function UploadPage() {
                 date_confidence: json.date_confidence,
                 date_unclear: !!json.date_unclear,
                 extraction: json.extraction,
+                pipeline_metrics: json.pipeline_metrics,
               });
               setStatus(json.date_unclear ? 'date_picker' : 'confirming');
             } else if (event.type === 'error') {
@@ -896,6 +898,7 @@ export default function UploadPage() {
           date: finalDate,
           extraction,
           date_source: dateSource,
+          pipeline_metrics: confirmPayload.pipeline_metrics,
         }),
       });
       const json: SaveResult = await res.json();

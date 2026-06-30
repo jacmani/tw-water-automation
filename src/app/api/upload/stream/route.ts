@@ -57,6 +57,25 @@ export async function POST(request: NextRequest) {
     return new Response('Invalid file type', { status: 400 });
   }
 
+  // HEIC/HEIF from iPhone cannot be decoded by any AI vision API (binary format mismatch).
+  // Detect before reading the buffer to avoid wasting memory on a large file we can't use.
+  const imageType = image.type || '';
+  const isHEIC = imageType === 'image/heic' || imageType === 'image/heif' || !!image.name.match(/\.(heic|heif)$/i);
+  if (isHEIC) {
+    const enc = new TextEncoder();
+    return new Response(
+      new ReadableStream({
+        start(ctrl) {
+          ctrl.enqueue(enc.encode(
+            `data: ${JSON.stringify({ type: 'error', message: 'HEIC/HEIF format from iPhone cannot be processed. On your iPhone, go to Settings → Camera → Formats → "Most Compatible" to capture in JPEG. Then retake the photo and upload again.' })}\n\n`
+          ));
+          ctrl.close();
+        }
+      }),
+      { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' } }
+    );
+  }
+
   const arrayBuffer = await image.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
   const rawType = image.type || 'image/jpeg';
@@ -207,12 +226,23 @@ export async function POST(request: NextRequest) {
         log('info', `Date read: ${extracted.date ?? 'unclear'}`, `date confidence ${((extracted.date_confidence ?? 0)*100).toFixed(0)}%`);
 
         // ── Step 4: Validation ────────────────────────────────────────────────
-        const validation = validateExtraction(extracted, visionResult, ocrSpaceResult);
-        extracted.overall_confidence = Math.min(1, extracted.overall_confidence + validation.confidenceBoost);
+        // Pass Mistral markdown as a third corroboration source (it has the best
+        // handwriting accuracy and is already available from Phase 1).
+        const validation = validateExtraction(
+          extracted,
+          visionResult,
+          ocrSpaceResult,
+          mistralOcrResult.success ? mistralOcrResult.markdown : undefined
+        );
+        extracted.overall_confidence = Math.min(1, Math.max(0, extracted.overall_confidence + validation.confidenceBoost));
         extracted.flagged_fields = [...(extracted.flagged_fields ?? []), ...validation.flags];
 
         if (validation.corroboratedNumbers > 0) {
-          log('success', `Cross-validation ✓`, `${validation.corroboratedNumbers} numbers corroborated across engines`);
+          const srcLabel = validation.ocrSources.join('+');
+          log('success', `Cross-validation ✓`, `${validation.corroboratedNumbers} values corroborated (${srcLabel})`);
+        }
+        if (validation.confidenceBoost < 0) {
+          log('warn', `Low OCR corroboration`, `${validation.unverifiedNumbers.length} of ${validation.corroboratedNumbers + validation.unverifiedNumbers.length} checked values not found in OCR word lists — confidence adjusted`);
         }
         if (validation.dateMismatch) {
           log('warn', 'Date mismatch between engines', `OCR: ${validation.visionDate}, Claude: ${extracted.date}`);
@@ -221,7 +251,7 @@ export async function POST(request: NextRequest) {
           extracted.date = validation.visionDate;
         }
 
-        const visionValidated = visionResult.words.length > 0 || (ocrSpaceResult?.words.length ?? 0) > 0;
+        const visionValidated = visionResult.words.length > 0 || (ocrSpaceResult?.words.length ?? 0) > 0 || mistralOcrResult.success;
 
         // ── Step 5: Cost summary (USD → INR) ──────────────────────────────────
         const costJson = cost.toJSON();
@@ -241,6 +271,19 @@ export async function POST(request: NextRequest) {
         log('success', `✓ Done in ${totalSec}s`, `extraction phase ${(extractMs/1000).toFixed(1)}s`);
         log('info', 'Preparing result…');
 
+        // ── Build pipeline metrics for persistent storage ─────────────────────
+        const pipelineMetrics = {
+          primary_engine: primaryEngine,
+          escalated: !!escalated,
+          tie_broken: !!tieBroken,
+          auto_corrected: !!autoFixed,
+          corroborated: validation.corroboratedNumbers,
+          unverified: validation.unverifiedNumbers.length,
+          qwen_ok: qwenResult.success,
+          mistral_ok: mistralOcrResult.success,
+          confidence_boost: Number(validation.confidenceBoost.toFixed(3)),
+        };
+
         send({
           type: 'done',
           payload: {
@@ -252,6 +295,7 @@ export async function POST(request: NextRequest) {
             extraction: extracted,
             visionValidated,
             cost: costJson,
+            pipeline_metrics: pipelineMetrics,
           },
         });
 

@@ -92,10 +92,17 @@ export async function extractTowerTotalsWithOpenRouter(
   }
 
   // Try each candidate model until one responds. 404 (dead slug) / 400 → try next.
+  // Each attempt has a 20s timeout — OpenRouter can hang on slow free models.
   for (const model of MODEL_CANDIDATES) {
     console.log(`[openrouter] Trying ${model} (free tie-breaker)`);
+    const ac = new AbortController();
+    const timer = setTimeout(() => {
+      ac.abort();
+      console.warn(`[openrouter] ${model} timed out after 20s — trying next candidate`);
+    }, 20_000);
     try {
       const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        signal: ac.signal,
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -118,6 +125,7 @@ export async function extractTowerTotalsWithOpenRouter(
           ],
         }),
       });
+      clearTimeout(timer);
 
       if (!response.ok) {
         const err = await response.text();
@@ -155,7 +163,9 @@ export async function extractTowerTotalsWithOpenRouter(
       console.log(`[openrouter] ✓ ${model}:`, readings.map(r => `${r.tower} ${r.type}=${r.total_ltrs}`).join(', '));
       return { readings, rawText: raw, success: true, model };
     } catch (err) {
-      console.error(`[openrouter] ${model} error:`, err);
+      clearTimeout(timer);
+      // AbortError = timeout; other errors = network/parse issues. Either way, try next.
+      console.error(`[openrouter] ${model} error:`, err instanceof Error ? err.message : err);
       // try next candidate
     }
   }

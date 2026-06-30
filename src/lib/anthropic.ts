@@ -481,6 +481,69 @@ function findDisagreements(
 }
 
 /**
+ * Compare water source totals between primary and an independent engine.
+ * Uses a more tolerant ratio (0.80 = 25% tolerance) since Qwen3-VL-8B is
+ * less reliable on the denser Section 2 than on the tower section.
+ */
+function findSourceDisagreements(
+  primary: ExtractionResult,
+  sourceReadings: Array<{ location: string; total: number | null }>,
+  primaryLabel: string,
+  otherLabel: string
+): string[] {
+  if (sourceReadings.length === 0) return [];
+  const TOLERANCE_SOURCE = 0.80; // 25% tolerance — more lenient for Section 2
+  const disagreements: string[] = [];
+  for (const r of sourceReadings) {
+    if (r.total === null || r.total === 0) continue;
+    const pSource = primary.water_sources?.find(s => s.location === r.location);
+    if (!pSource?.total) continue;
+    const ratio = Math.min(pSource.total, r.total) / Math.max(pSource.total, r.total);
+    if (ratio < TOLERANCE_SOURCE) {
+      disagreements.push(`source ${r.location}: ${primaryLabel}=${pSource.total} ${otherLabel}=${r.total}`);
+      console.warn(`[extraction] ${primaryLabel}/${otherLabel} disagree on source "${r.location}": ${primaryLabel}=${pSource.total} ${otherLabel}=${r.total} ratio=${ratio.toFixed(2)}`);
+    }
+  }
+  return disagreements;
+}
+
+/**
+ * Compare summary section fields (input_total, tower_usage) between primary
+ * and an independent engine. These are critical accountability values — a
+ * mismatch here usually means the extractor misread Section 6's TOTAL COLLECTION
+ * or TOTAL USAGE columns.
+ */
+function findSummaryDisagreements(
+  primary: ExtractionResult,
+  summaryInputTotal: number | null,
+  summaryTowerUsage: number | null,
+  primaryLabel: string,
+  otherLabel: string
+): string[] {
+  const disagreements: string[] = [];
+
+  const pInputTotal = primary.summary?.input_total;
+  if (pInputTotal != null && summaryInputTotal != null && summaryInputTotal > 0) {
+    const ratio = Math.min(pInputTotal, summaryInputTotal) / Math.max(pInputTotal, summaryInputTotal);
+    if (ratio < TOLERANCE_RATIO) {
+      disagreements.push(`summary input_total: ${primaryLabel}=${pInputTotal} ${otherLabel}=${summaryInputTotal}`);
+      console.warn(`[extraction] ${primaryLabel}/${otherLabel} disagree on summary.input_total: ${primaryLabel}=${pInputTotal} ${otherLabel}=${summaryInputTotal} ratio=${ratio.toFixed(2)}`);
+    }
+  }
+
+  const pTowerUsage = primary.summary?.tower_usage;
+  if (pTowerUsage != null && summaryTowerUsage != null && summaryTowerUsage > 0) {
+    const ratio = Math.min(pTowerUsage, summaryTowerUsage) / Math.max(pTowerUsage, summaryTowerUsage);
+    if (ratio < TOLERANCE_RATIO) {
+      disagreements.push(`summary tower_usage: ${primaryLabel}=${pTowerUsage} ${otherLabel}=${summaryTowerUsage}`);
+      console.warn(`[extraction] ${primaryLabel}/${otherLabel} disagree on summary.tower_usage: ${primaryLabel}=${pTowerUsage} ${otherLabel}=${summaryTowerUsage} ratio=${ratio.toFixed(2)}`);
+    }
+  }
+
+  return disagreements;
+}
+
+/**
  * Tie-breaker resolution: for each disputed tower row, check whether the OpenRouter
  * free engine agrees with the primary or with Qwen. If 2 of the 3 free engines agree
  * on a value, adopt it into the primary result (free) and avoid paying for Haiku.
@@ -619,7 +682,16 @@ async function extractSheetDataInner(
 
   // ── Phase 2.2: agreement gate — does an independent free engine confirm it? ──
   const qwenReadings = qwenResult?.success ? qwenResult.readings : [];
-  const qwenDisagreements = findDisagreements(result, qwenReadings, 'primary', 'qwen');
+  const qwenSourceReadings = qwenResult?.success ? (qwenResult.sourceReadings ?? []) : [];
+  const qwenSummaryInputTotal = qwenResult?.success ? (qwenResult.summaryInputTotal ?? null) : null;
+  const qwenSummaryTowerUsage = qwenResult?.success ? (qwenResult.summaryTowerUsage ?? null) : null;
+
+  // Check for disagreements across all three sections Qwen now reads.
+  const qwenTowerDisagreements = findDisagreements(result, qwenReadings, 'primary', 'qwen');
+  const qwenSourceDisagreements = findSourceDisagreements(result, qwenSourceReadings, 'primary', 'qwen');
+  const qwenSummaryDisagreements = findSummaryDisagreements(result, qwenSummaryInputTotal, qwenSummaryTowerUsage, 'primary', 'qwen');
+  const qwenDisagreements = [...qwenTowerDisagreements, ...qwenSourceDisagreements, ...qwenSummaryDisagreements];
+
   const sanity = checkSanity(result);
   const lowConfidence = result.overall_confidence < CONFIDENCE_THRESHOLD;
 
@@ -628,19 +700,25 @@ async function extractSheetDataInner(
     console.log('[extraction] Agreement gate PASSED → accepting free result, no paid call');
     return result;
   }
-  console.log(`[extraction] Gate failed (qwenDisagreements=${qwenDisagreements.length}, sanity=${sanity.violated}, lowConf=${lowConfidence})`);
+  console.log(`[extraction] Gate failed (tower=${qwenTowerDisagreements.length} src=${qwenSourceDisagreements.length} summary=${qwenSummaryDisagreements.length} sanity=${sanity.violated} lowConf=${lowConfidence})`);
 
-  // ── Phase 2.3: free tie-breaker (OpenRouter) for tower-total disagreements ───
+  // ── Phase 2.3: free tie-breaker (OpenRouter) for TOWER disagreements only ───
+  // Source and summary disagreements cannot be resolved by the free tie-breaker
+  // (which only reads tower totals) — route them straight to paid escalation.
   let stillNeedsPaid = sanity.violated || lowConfidence;
-  if (qwenDisagreements.length > 0 && qwenResult) {
+  if (qwenSourceDisagreements.length > 0 || qwenSummaryDisagreements.length > 0) {
+    stillNeedsPaid = true;
+  }
+
+  if (qwenTowerDisagreements.length > 0 && qwenResult) {
     const openRouter = await extractTowerTotalsWithOpenRouter(base64Image, mediaType);
     if (openRouter.success) cost?.addFree('OpenRouter (tie-breaker)', 'free tier');
     const { resolved, unresolved } = resolveWithTieBreaker(result, qwenResult, openRouter);
     if (unresolved === -1) {
-      console.log('[extraction] Tie-breaker unavailable — disagreements remain → paid escalation');
+      console.log('[extraction] Tie-breaker unavailable — tower disagreements remain → paid escalation');
       stillNeedsPaid = true;
     } else {
-      console.log(`[extraction] Tie-breaker resolved ${resolved} row(s), ${unresolved} unresolved`);
+      console.log(`[extraction] Tie-breaker resolved ${resolved} tower row(s), ${unresolved} unresolved`);
       if (unresolved > 0) stillNeedsPaid = true;
       // Re-run sanity after free corrections — may now be clean.
       if (!stillNeedsPaid && !checkSanity(result).violated) {

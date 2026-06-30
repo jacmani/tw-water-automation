@@ -10,7 +10,7 @@ const SPIKE_THRESHOLD = 15; // % above 7-day avg
 export async function POST(request: NextRequest) {
   const supabase = createServerClient();
 
-  let body: { image_url: string; date: string; extraction: ExtractionResult; date_source?: string };
+  let body: { image_url: string; date: string; extraction: ExtractionResult; date_source?: string; pipeline_metrics?: object };
   try {
     body = await request.json();
   } catch {
@@ -119,7 +119,11 @@ export async function POST(request: NextRequest) {
 
     await supabase
       .from('daily_sheets')
-      .update({ processed_status: 'processed', confidence_score: extraction.overall_confidence })
+      .update({
+        processed_status: 'processed',
+        confidence_score: extraction.overall_confidence,
+        ...(body.pipeline_metrics ? { pipeline_metrics: body.pipeline_metrics } : {}),
+      })
       .eq('id', sheet.id);
 
     // ── Mirror into the logbook data model so /logbook shows photo uploads too ──
@@ -243,8 +247,7 @@ function sourceSlug(location: string): string | null {
  * edit and a photo upload for the same date converge instead of duplicating.
  */
 async function mirrorToLogbook(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  supabase: any,
+  supabase: any, // SupabaseClient — typed as any to avoid importing the heavy generic form
   date: string,
   extraction: ExtractionResult
 ): Promise<void> {
