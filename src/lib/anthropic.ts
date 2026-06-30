@@ -469,7 +469,7 @@ function findDisagreements(
   if (readings.length === 0) return [];
   const disagreements: string[] = [];
   for (const r of readings) {
-    if (r.total_ltrs === null) continue;
+    if (r.total_ltrs === null || r.total_ltrs === 0) continue;
     const pv = primary.tower_section?.[r.tower]?.[r.type]?.total_ltrs;
     if (pv === null || pv === undefined) continue;
     const ratio = Math.min(pv, r.total_ltrs) / Math.max(pv, r.total_ltrs);

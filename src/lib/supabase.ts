@@ -48,7 +48,9 @@ export async function wasSheetUploadedToday(todayUtc: string): Promise<boolean> 
   const { count } = await supabase
     .from('daily_sheets')
     .select('id', { count: 'exact', head: true })
-    .gte('created_at', `${todayUtc}T00:00:00`);
+    .gte('created_at', `${todayUtc}T00:00:00`)
+    .eq('processed_status', 'processed')
+    .eq('superseded', false);
   return (count ?? 0) > 0;
 }
 

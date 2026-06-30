@@ -82,7 +82,8 @@ export async function POST(request: NextRequest) {
         };
       })
     );
-    await supabase.from('tower_consumption').insert(towerRows);
+    const { error: towerErr } = await supabase.from('tower_consumption').insert(towerRows);
+    if (towerErr) throw new Error(`[confirm] tower_consumption insert failed: ${towerErr.message}`);
 
     const sourceRows = extraction.water_sources.map((s) => ({
       sheet_id: sheet.id,
@@ -93,7 +94,8 @@ export async function POST(request: NextRequest) {
       today_ltrs: s.today_ltrs,
       total: s.total,
     }));
-    await supabase.from('water_sources').insert(sourceRows);
+    const { error: sourceErr } = await supabase.from('water_sources').insert(sourceRows);
+    if (sourceErr) throw new Error(`[confirm] water_sources insert failed: ${sourceErr.message}`);
 
     const levelRows = extraction.water_levels.map((l) => ({
       sheet_id: sheet.id,
@@ -102,7 +104,8 @@ export async function POST(request: NextRequest) {
       cm_reading: l.cm_reading,
       percentage: l.percentage,
     }));
-    await supabase.from('water_levels').insert(levelRows);
+    const { error: levelErr } = await supabase.from('water_levels').insert(levelRows);
+    if (levelErr) throw new Error(`[confirm] water_levels insert failed: ${levelErr.message}`);
 
     const amenityRows = extraction.amenities.map((a) => ({
       sheet_id: sheet.id,
@@ -113,10 +116,12 @@ export async function POST(request: NextRequest) {
       diff: a.diff,
       cumulative: a.cumulative ?? null,
     }));
-    await supabase.from('amenities').insert(amenityRows);
+    const { error: amenityErr } = await supabase.from('amenities').insert(amenityRows);
+    if (amenityErr) throw new Error(`[confirm] amenities insert failed: ${amenityErr.message}`);
 
     const { confidence: _c, ...summaryFields } = extraction.summary;
-    await supabase.from('summary').insert({ sheet_id: sheet.id, ...summaryFields });
+    const { error: summaryErr } = await supabase.from('summary').insert({ sheet_id: sheet.id, ...summaryFields });
+    if (summaryErr) throw new Error(`[confirm] summary insert failed: ${summaryErr.message}`);
 
     await supabase
       .from('daily_sheets')
@@ -268,10 +273,11 @@ async function mirrorToLogbook(
   extraction: ExtractionResult
 ): Promise<void> {
   // 1. Master record
-  await supabase.from('daily_log').upsert(
+  const { error: logErr } = await supabase.from('daily_log').upsert(
     { log_date: date, updated_at: new Date().toISOString() },
     { onConflict: 'log_date' }
   );
+  if (logErr) console.error('[mirror] daily_log upsert error:', logErr);
 
   // 2. Tower meter readings (type → meter_type, total_ltrs → total_in_ltrs)
   const towers: TowerName[] = ['Venus', 'Mercury', 'Neptune', 'Jupiter'];
@@ -291,7 +297,8 @@ async function mirrorToLogbook(
       };
     })
   );
-  await supabase.from('tower_meter_readings').upsert(towerRows, { onConflict: 'log_date,tower,meter_type' });
+  const { error: towerMirrorErr } = await supabase.from('tower_meter_readings').upsert(towerRows, { onConflict: 'log_date,tower,meter_type' });
+  if (towerMirrorErr) console.error('[mirror] tower_meter_readings upsert error:', towerMirrorErr);
 
   // 3. Input source readings (location → source_name slug)
   const srcRows = (extraction.water_sources ?? [])
@@ -310,7 +317,8 @@ async function mirrorToLogbook(
     })
     .filter((r): r is NonNullable<typeof r> => r !== null);
   if (srcRows.length > 0) {
-    await supabase.from('input_source_readings').upsert(srcRows, { onConflict: 'log_date,source_name' });
+    const { error: srcMirrorErr } = await supabase.from('input_source_readings').upsert(srcRows, { onConflict: 'log_date,source_name' });
+    if (srcMirrorErr) console.error('[mirror] input_source_readings upsert error:', srcMirrorErr);
   }
 
   // 4. Amenity meter readings (Car Wash + Swimming Pool → amenity_meter_readings)
@@ -328,24 +336,21 @@ async function mirrorToLogbook(
       yesterday: a.y_day ?? null,
       today: a.r_day ?? null,
       consumption: a.diff ?? null,
-      cumulative: null,
+      cumulative: a.cumulative ?? null,
     }))
-    .filter((r) => r.location !== null) as Array<{
-      log_date: string; amenity_type: string; location: string;
-      yesterday: number | null; today: number | null; consumption: number | null; cumulative: number | null;
-    }>;
+    .filter((r): r is typeof r & { location: string } => r.location !== null);
   if (amenityRows.length > 0) {
-    const { error } = await supabase
+    const { error: amenityMirrorErr } = await supabase
       .from('amenity_meter_readings')
       .upsert(amenityRows, { onConflict: 'log_date,amenity_type,location' });
-    if (error) console.error('[mirror] amenity_meter_readings upsert error:', error);
+    if (amenityMirrorErr) console.error('[mirror] amenity_meter_readings upsert error:', amenityMirrorErr);
   }
 
-  // 4b. Party Hall → utility_meters (wide table: one row per date, one column per meter)
+  // 4b. Party Hall → utility_meter_readings (wide table: one row per date, one column per meter)
   const phAmenities = (extraction.amenities ?? []).filter(a => a.section === 'Party Hall');
   if (phAmenities.length > 0) {
     const ph = (name: string) => phAmenities.find(a => a.meter_name === name);
-    await supabase.from('utility_meters').upsert({
+    const { error: phErr } = await supabase.from('utility_meter_readings').upsert({
       log_date: date,
       p_hall_meter_1: ph('P Hall Meter-1')?.r_day ?? null,
       p_hall_meter_2: ph('P Hall Meter-2')?.r_day ?? null,
@@ -357,6 +362,7 @@ async function mirrorToLogbook(
       consumption_today:     null,
       consumption_total:     null,
     }, { onConflict: 'log_date' });
+    if (phErr) console.error('[mirror] utility_meter_readings upsert error:', phErr);
   }
 
   // 5. Water level readings (tank/time_slot → wide columns). The extraction model
@@ -378,14 +384,15 @@ async function mirrorToLogbook(
     log_date: date, time_slot, ...cols,
   }));
   if (levelRows.length > 0) {
-    await supabase.from('water_level_readings').upsert(levelRows, { onConflict: 'log_date,time_slot' });
+    const { error: levelMirrorErr } = await supabase.from('water_level_readings').upsert(levelRows, { onConflict: 'log_date,time_slot' });
+    if (levelMirrorErr) console.error('[mirror] water_level_readings upsert error:', levelMirrorErr);
   }
 
   // 6. Daily inflow summary — now a DIRECT 1:1 mapping to the sheet's TOTAL INFLOW
   // columns (no more v_side+n_side guesswork that mislabeled tanker/well values).
   const s = extraction.summary;
   if (s) {
-    await supabase.from('daily_inflow_summary').upsert({
+    const { error: inflowErr } = await supabase.from('daily_inflow_summary').upsert({
       log_date: date,
       water_inflow: s.water_inflow ?? null,
       well_inflow: s.well_inflow ?? null,
@@ -394,5 +401,6 @@ async function mirrorToLogbook(
       total_usage: s.tower_usage ?? null,
       balance: s.diff ?? null,
     }, { onConflict: 'log_date' });
+    if (inflowErr) console.error('[mirror] daily_inflow_summary upsert error:', inflowErr);
   }
 }

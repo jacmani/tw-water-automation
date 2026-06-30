@@ -97,13 +97,14 @@ export async function POST(request: NextRequest) {
         send({ type: 'log', level, message, detail, elapsed: Date.now() - startMs });
       }
 
+      let fileName: string | undefined;
       try {
         const supabase = createServerClient();
 
         // ── Step 1: Upload to storage ─────────────────────────────────────────
         log('info', 'Uploading image to storage…');
         const ext = image.name.split('.').pop()?.toLowerCase() ?? 'jpg';
-        const fileName = `pending-${Date.now()}.${ext}`;
+        fileName = `pending-${Date.now()}.${ext}`;
         const { error: storageError } = await supabase.storage
           .from('sheet-images')
           .upload(fileName, buffer, { contentType: image.type || 'image/jpeg', upsert: false });
@@ -302,6 +303,10 @@ export async function POST(request: NextRequest) {
       } catch (err) {
         console.error('[stream] Unexpected error:', err);
         send({ type: 'error', message: err instanceof Error ? err.message : 'Unexpected error' });
+        if (fileName) {
+          const supabase = createServerClient();
+          await supabase.storage.from('sheet-images').remove([fileName]);
+        }
       } finally {
         controller.close();
       }
