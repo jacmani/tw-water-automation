@@ -129,6 +129,8 @@ interface SaveResult {
   confidence?: number;
   flagged_fields?: string[];
   error?: string;
+  community_total?: number;
+  tower_spikes?: { tower: string; overagePct: number }[];
 }
 
 // ── Progress bar ────────────────────────────────────────────────────────────
@@ -915,6 +917,24 @@ export default function UploadPage() {
       : saveResult.confidence >= 0.75 ? 'text-yellow-400' : 'text-red-400'
     : '';
 
+  // Success screen derived values — safe to compute unconditionally (all guard against null)
+  const communityTotalForDisplay: number = saveResult?.community_total ?? (() => {
+    if (!confirmPayload?.extraction?.tower_section) return 0;
+    return (['Venus', 'Mercury', 'Neptune', 'Jupiter'] as const).reduce((sum, tw) => {
+      const t = confirmPayload.extraction.tower_section[tw];
+      return sum + (t?.DO?.total_ltrs ?? 0) + (t?.DR?.total_ltrs ?? 0);
+    }, 0);
+  })();
+  const towerSpikesForDisplay = saveResult?.tower_spikes ?? [];
+  const whatsappShareUrl = (() => {
+    const d = saveResult?.date ?? 'today';
+    const total = communityTotalForDisplay;
+    let text = `✅ TW Water sheet uploaded — ${d}\nCommunity: ${total.toLocaleString('en-IN')} L`;
+    for (const s of towerSpikesForDisplay) text += `\n${s.tower} Tower: ⚠ +${s.overagePct}% above avg`;
+    text += `\nView dashboard: https://tw-water-automation.vercel.app`;
+    return `https://wa.me/?text=${encodeURIComponent(text)}`;
+  })();
+
   return (
     <main className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white flex flex-col">
       <Navbar />
@@ -933,17 +953,45 @@ export default function UploadPage() {
         )}
 
         {status === 'success' && saveResult && (
-          <div className="space-y-5">
-            <div className="bg-emerald-900/30 border border-emerald-700 rounded-xl p-5 text-center">
-              <div className="text-4xl mb-2">✓</div>
-              <p className="text-emerald-400 font-semibold text-lg">Sheet Saved</p>
+          <div className="space-y-4">
+            {/* Status header */}
+            <div className="bg-emerald-900/25 border border-emerald-700/50 rounded-xl p-5 text-center">
+              <div className="text-3xl mb-1 text-emerald-400 font-bold">✓</div>
+              <p className="text-emerald-400 font-semibold text-lg">Sheet processed &amp; saved</p>
               {saveResult.date && <p className="text-slate-300 text-sm mt-1">{formatDate(saveResult.date)}</p>}
               {saveResult.confidence != null && (
-                <p className={`text-sm mt-2 font-medium ${confidenceColor}`}>
+                <p className={`text-sm mt-1.5 font-medium ${confidenceColor}`}>
                   Extraction confidence: {Math.round(saveResult.confidence * 100)}%
                 </p>
               )}
             </div>
+
+            {/* Mini summary card */}
+            {communityTotalForDisplay > 0 && (
+              <div className="bg-slate-900 border border-slate-700 rounded-xl p-4">
+                <p className="text-slate-500 text-xs font-semibold uppercase tracking-wider mb-1">Today&apos;s Community Total</p>
+                <p className="text-white text-2xl font-bold">{(communityTotalForDisplay / 1000).toFixed(1)} kL</p>
+                {towerSpikesForDisplay.length > 0 && (
+                  <div className="space-y-1 pt-2 mt-2 border-t border-slate-800">
+                    {towerSpikesForDisplay.map(s => (
+                      <p key={s.tower} className="text-amber-400 text-sm font-medium">
+                        ⚠ {s.tower} Tower: +{s.overagePct}% above avg
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* WhatsApp share CTA — primary action */}
+            <a
+              href={whatsappShareUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-center gap-2 w-full bg-[#25D366] hover:bg-[#1db954] text-white font-bold py-4 rounded-xl text-base transition-colors"
+            >
+              <span>📱</span> Share to WhatsApp
+            </a>
 
             <FlaggedPanel
               flaggedFields={saveResult.flagged_fields ?? []}

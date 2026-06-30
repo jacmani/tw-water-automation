@@ -187,6 +187,7 @@ const MUTED = `color:#94A3B8;font-size:13px;`;
 const H2 = `color:#E2E8F0;font-size:22px;font-weight:800;margin:0 0 4px;letter-spacing:-0.5px;`;
 const LABEL = `color:#64748B;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;margin:0 0 4px;`;
 const VALUE_LG = `color:#fff;font-size:28px;font-weight:900;margin:0;letter-spacing:-1px;`;
+const DASH_URL = 'https://tw-water-automation.vercel.app';
 
 function fmt(litres: number): string {
   return `${litres.toLocaleString('en-IN')} L`;
@@ -228,6 +229,33 @@ function spikeBadge(tower: string, pct: number): string {
   return `<tr><td style="padding:4px 0;"><span style="display:inline-block;background:rgba(220,38,38,0.15);border:1px solid #991b1b;border-radius:6px;padding:3px 10px;font-size:12px;color:#FCA5A5;font-weight:600;">${tower}: +${pct.toFixed(0)}% above avg</span></td></tr>`;
 }
 
+// waUrl: full https://wa.me/?text=... href (already encoded). waPrimary: spike layout (WA full-width, dashboard text link).
+function ctaSection(waUrl?: string, waPrimary = false): string {
+  const BORDER = 'border-top:1px solid #1E293B;';
+  if (!waUrl) {
+    return `
+      <tr><td style="padding:16px 32px 20px;text-align:center;${BORDER}">
+        <a href="${DASH_URL}" style="display:inline-block;background:#1E293B;border:1.5px solid #334155;color:#94A3B8;font-size:13px;font-weight:600;padding:10px 24px;border-radius:8px;text-decoration:none;font-family:system-ui,sans-serif;">View Dashboard →</a>
+      </td></tr>`;
+  }
+  const waBtn = `<a href="${waUrl}" style="display:block;background:#25D366;color:#fff;font-size:${waPrimary ? '15' : '13'}px;font-weight:700;padding:${waPrimary ? '14px' : '11px 16px'};border-radius:8px;text-decoration:none;text-align:center;font-family:system-ui,sans-serif;">📱 Share on WhatsApp</a>`;
+  if (waPrimary) {
+    return `
+      <tr><td style="padding:16px 32px 8px;${BORDER}">${waBtn}</td></tr>
+      <tr><td style="padding:4px 32px 20px;text-align:center;">
+        <a href="${DASH_URL}" style="color:#60A5FA;font-size:13px;font-weight:600;text-decoration:underline;font-family:system-ui,sans-serif;">View Dashboard →</a>
+      </td></tr>`;
+  }
+  const dashBtn = `<a href="${DASH_URL}" style="display:block;background:#1E293B;border:1.5px solid #334155;color:#94A3B8;font-size:13px;font-weight:600;padding:11px 16px;border-radius:8px;text-decoration:none;text-align:center;font-family:system-ui,sans-serif;">View Dashboard →</a>`;
+  return `
+    <tr><td style="padding:16px 32px 20px;${BORDER}">
+      <table cellpadding="0" cellspacing="0" width="100%"><tr>
+        <td width="50%" style="padding-right:6px;">${dashBtn}</td>
+        <td width="50%" style="padding-left:6px;">${waBtn}</td>
+      </tr></table>
+    </td></tr>`;
+}
+
 function emailShell(accentColor: string, previewText: string, body: string): string {
   return `<!DOCTYPE html>
 <html>
@@ -244,6 +272,22 @@ function emailShell(accentColor: string, previewText: string, body: string): str
       <table width="600" align="center" cellpadding="0" cellspacing="0" style="${CONTAINER}border-radius:12px;overflow:hidden;margin-top:24px;margin-bottom:24px;">
         <!-- accent bar -->
         <tr><td style="background:${accentColor};height:5px;font-size:0;">&nbsp;</td></tr>
+        <!-- TW identity header -->
+        <tr><td style="padding:16px 32px;border-bottom:1px solid #1E293B;">
+          <table cellpadding="0" cellspacing="0"><tr>
+            <td style="padding-right:12px;vertical-align:middle;">
+              <table cellpadding="0" cellspacing="0"><tr>
+                <td width="40" height="40" style="background:#7C3AED;border-radius:20px;text-align:center;vertical-align:middle;padding:9px 9px 9px 10px;">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="white"><path d="M12 2C12 2 5 10 5 15a7 7 0 0 0 14 0C19 10 12 2 12 2z"/></svg>
+                </td>
+              </tr></table>
+            </td>
+            <td style="vertical-align:middle;">
+              <div style="color:#fff;font-size:14px;font-weight:700;font-family:system-ui,sans-serif;line-height:1.2;margin:0;">Trinity World</div>
+              <div style="color:#64748B;font-size:10px;text-transform:uppercase;letter-spacing:0.12em;font-family:system-ui,sans-serif;margin:2px 0 0;">Water Management System</div>
+            </td>
+          </tr></table>
+        </td></tr>
         ${body}
         <!-- footer -->
         <tr><td style="background:#0A0F1E;padding:16px 32px;text-align:center;">
@@ -260,6 +304,7 @@ function emailShell(accentColor: string, previewText: string, body: string): str
 }
 
 function spikeAlertHtml({ tower, sheetDate, currentLitres, sevenDayAvg, overagePct, color }: SpikePayload & { color: string }): string {
+  const spikeWaUrl = `https://wa.me/?text=${encodeURIComponent(`⚠ Water Alert — ${tower} Tower: ${fmt(currentLitres)} today (+${overagePct.toFixed(0)}% above 7-day avg). Date: ${sheetDate}. Please investigate. Full report: ${DASH_URL}`)}`;
   const body = `
     <!-- header -->
     <tr><td style="${CELL}background:rgba(127,29,29,0.30);border-bottom:1px solid #7F1D1D;">
@@ -300,11 +345,13 @@ function spikeAlertHtml({ tower, sheetDate, currentLitres, sevenDayAvg, overageP
       <p style="color:#94A3B8;font-size:13px;margin:0 0 4px;">• Check all taps and fixtures in ${tower} Tower for running water</p>
       <p style="color:#94A3B8;font-size:13px;margin:0 0 4px;">• Alert the ${tower} GC Chair to investigate</p>
       <p style="color:#94A3B8;font-size:13px;margin:0;">• WhatsApp / Call Maintenance: <strong style="color:#60A5FA;">9072624550</strong></p>
-    </td></tr>`;
+    </td></tr>
+    ${ctaSection(spikeWaUrl, true)}`;
   return emailShell(color, `⚠ Water Alert: ${tower} Tower +${overagePct.toFixed(0)}%`, body);
 }
 
 function weeklyReportHtml(p: WeeklyReportPayload): string {
+  const weeklyWaUrl = `https://wa.me/?text=${encodeURIComponent(`📊 TW Weekly Water Report (${p.weekStart} → ${p.weekEnd}): ${fmt(p.communityTotal)} community total. Full report: ${DASH_URL}`)}`;
   const spikesHtml = p.spikesThisWeek.length
     ? `<tr><td style="${CELL}border-top:1px solid #1E293B;">
         <p style="${LABEL}margin-bottom:8px;">Spike Alerts This Week</p>
@@ -329,7 +376,8 @@ function weeklyReportHtml(p: WeeklyReportPayload): string {
       <p style="${LABEL}margin-bottom:8px;">Per Tower Totals</p>
       <table width="100%" cellpadding="0" cellspacing="0">${towerBadges(p.towerTotals)}</table>
     </td></tr>
-    ${spikesHtml}`;
+    ${spikesHtml}
+    ${ctaSection(weeklyWaUrl)}`;
   return emailShell('#2563EB', `Weekly Water Report: ${p.weekStart} → ${p.weekEnd}`, body);
 }
 
@@ -378,6 +426,7 @@ function monthlyReportHtml(p: MonthlyReportPayload): string {
     <tr><td style="${CELL}">
       <p style="${LABEL}margin-bottom:6px;">Month Summary</p>
       <p style="${MUTED}margin:0;">Spike alert days this month: <strong style="color:#FCA5A5;">${p.spikeDays}</strong></p>
-    </td></tr>`;
+    </td></tr>
+    ${ctaSection()}`;
   return emailShell('#7C3AED', `Monthly Water Report: ${p.month}`, body);
 }

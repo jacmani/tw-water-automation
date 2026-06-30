@@ -191,12 +191,14 @@ export async function POST(request: NextRequest) {
 
     // Fire spike alerts (non-blocking — don't fail the request if email fails)
     const spikes: Promise<void>[] = [];
+    const towerSpikesData: { tower: string; overagePct: number }[] = [];
     for (const tower of towers) {
       const current = towerTotals[tower];
       const avg = sevenDayAvgs[tower];
       if (current > 0 && avg != null && avg > 0) {
         const pct = percentageDiff(current, avg);
         if (pct >= SPIKE_THRESHOLD) {
+          towerSpikesData.push({ tower, overagePct: Math.round(pct) });
           spikes.push(
             sendSpikeAlert(supabase, {
               tower,
@@ -211,6 +213,8 @@ export async function POST(request: NextRequest) {
     }
     await Promise.all(spikes);
 
+    const communityTotal = Object.values(towerTotals).reduce((a, b) => a + b, 0);
+
     // Purge ISR cache so dashboard shows new data immediately
     revalidatePath('/');
     revalidatePath('/history');
@@ -222,6 +226,8 @@ export async function POST(request: NextRequest) {
       date,
       confidence: extraction.overall_confidence,
       flagged_fields: extraction.flagged_fields ?? [],
+      community_total: communityTotal,
+      tower_spikes: towerSpikesData,
     });
   } catch (err) {
     console.error('DB insert error:', err);
