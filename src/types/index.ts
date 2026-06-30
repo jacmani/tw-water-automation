@@ -1,6 +1,6 @@
 export type TowerName = 'Venus' | 'Mercury' | 'Neptune' | 'Jupiter';
 export type MeterType = 'DO' | 'DR';
-export type TankName = 'JDO' | 'JDR' | 'CT' | 'MDO' | 'MDR' | 'Fire Tank';
+export type TankName = 'JDO' | 'JDR' | 'CT' | 'MDO' | 'MDR' | 'Fire Tank'; // Fire Tank kept for legacy DB rows
 export type TimeSlot = '6AM' | '12PM' | '6PM' | '12AM';
 
 export type CommitteeRole =
@@ -92,6 +92,7 @@ export interface Amenity {
   y_day: number | null;
   r_day: number | null;
   diff: number | null;
+  cumulative: number | null;
 }
 
 export interface Summary {
@@ -144,6 +145,7 @@ export interface AmenityData {
   y_day: number | null;
   r_day: number | null;
   diff: number | null;
+  cumulative?: number | null; // Car Wash + Swimming Pool only (template has CUMULATIVE row)
   confidence: number;
 }
 
@@ -228,7 +230,7 @@ export type InputSourceName =
 
 export type AmenityType = 'Car Wash' | 'Swimming Pool' | 'Party Hall';
 export type CarWashLocation = 'Jupiter' | 'Mercury' | 'Venus' | 'Neptune';
-export type PoolLocation = 'Meter 1' | 'Meter 2' | 'Meter 3' | 'Meter 4' | 'Meter 5';
+export type PoolLocation = 'Meter-1' | 'Meter-2' | 'Meter-3' | 'Meter 1' | 'Meter 2' | 'Meter 3' | 'Meter 4' | 'Meter 5'; // Meter-1/2/3 = template labels; others kept for legacy rows
 export type AmenityLocation = CarWashLocation | PoolLocation | string;
 export type WaterLevelSlot = '6AM' | '12PM' | '6PM' | '12AM';
 

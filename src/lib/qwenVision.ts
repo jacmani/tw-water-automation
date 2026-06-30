@@ -6,7 +6,7 @@
  * summary fields. When two architecturally different models agree on a digit,
  * the probability of a shared misread is extremely low.
  *
- * v3.1 expansion: now reads Section 2 (8 source totals) and Section 6
+ * v3.1 expansion: now reads Section 2 (7 source totals) and Section 6
  * (input_total + tower_usage) in addition to Section 1 tower totals.
  * This closes the coverage gap for source_duplication and summary_misread
  * — the two most common failure modes.
@@ -22,7 +22,7 @@ export interface QwenTowerReading {
 }
 
 export interface QwenSourceReading {
-  location: string; // canonical location name, e.g. 'M+V DO with MTR'
+  location: string; // canonical location name matching template label, e.g. 'Mercury + Venus Tanker'
   total: number | null;
 }
 
@@ -46,16 +46,15 @@ const EMPTY_RESULT: QwenVisionResult = {
   model: 'Qwen/Qwen3-VL-8B-Instruct',
 };
 
-// Maps Qwen's short key names → canonical location names used in the extraction result.
+// Maps Qwen's short JSON key names → canonical location names (matching printed template labels).
 const SOURCE_KEY_MAP: Record<string, string> = {
-  'MV_MTR':       'M+V DO with MTR',
-  'JN_JTR':       'J+N DO with JTR',
-  'V_Well_123':   'V Well 1+2+3',
-  'V_Well_4B1B2': 'V Well 4+B1+B2',
-  'N_Well_5':     'N Well 5',
-  'N_Well_6':     'N Well 6',
-  'Outside_Well': 'ON Outside Well',
-  'Kingsley':     'Kingsley',
+  'MV_Tanker':    'Mercury + Venus Tanker',
+  'JN_Tanker':    'Jupiter + Neptune Tanker',
+  'V_Well_123':   'Venus Side Well 1 2 3',
+  'V_Well_4':     'Venus Side Well 4',
+  'N_Well_5':     'Neptune Side Well 5',
+  'N_Well_6':     'Neptune Side Well 6',
+  'Open_Well':    'Open Well',
 };
 
 const QWEN_PROMPT = `You are reading a handwritten daily water meter sheet from India.
@@ -68,15 +67,14 @@ Indian number format: 1,76,000 = 176000 | 1,98,000 = 198000 | 2,54,000 = 254000
 Find the "Total Litres" column (3rd column) for each of the 8 rows.
 
 === SECTION 2 — SOURCE/LOCATION SECTION (middle of sheet) ===
-8 source rows. Find the "Total" column (rightmost data column) for each:
-  MV_MTR       = M+V DO with MTR
-  JN_JTR       = J+N DO with JTR
-  V_Well_123   = V Well 1+2+3
-  V_Well_4B1B2 = V Well 4+B1+B2
-  N_Well_5     = N Well 5
-  N_Well_6     = N Well 6
-  Outside_Well = ON Outside Well
-  Kingsley     = Kingsley
+7 source rows. Find the "Total" column (rightmost data column) for each:
+  MV_Tanker  = Mercury + Venus Tanker   (row 1)
+  JN_Tanker  = Jupiter + Neptune Tanker (row 2)
+  V_Well_123 = Venus Side Well 1 2 3    (row 3)
+  V_Well_4   = Venus Side Well 4        (row 4)
+  N_Well_5   = Neptune Side Well 5      (row 5)
+  N_Well_6   = Neptune Side Well 6      (row 6)
+  Open_Well  = Open Well                (row 7)
 
 === SECTION 6 — TOTAL INFLOW TABLE (bottom of sheet) ===
 A table with columns: WATER | WELL | TANKER | TOTAL COLLECTION | TOTAL USAGE | BALANCE
@@ -94,10 +92,10 @@ Return ONLY this JSON, no explanation, no markdown:
   "Mercury_DO": null, "Mercury_DR": null,
   "Neptune_DO": null, "Neptune_DR": null,
   "Jupiter_DO": null, "Jupiter_DR": null,
-  "MV_MTR": null, "JN_JTR": null,
-  "V_Well_123": null, "V_Well_4B1B2": null,
+  "MV_Tanker": null, "JN_Tanker": null,
+  "V_Well_123": null, "V_Well_4": null,
   "N_Well_5": null, "N_Well_6": null,
-  "Outside_Well": null, "Kingsley": null,
+  "Open_Well": null,
   "input_total": null, "tower_usage": null
 }`;
 
@@ -194,7 +192,7 @@ export async function extractTowerTotalsWithQwen(
     const towerLog = readings.map(r => `${r.tower[0]}${r.type}=${r.total_ltrs != null ? (r.total_ltrs/1000).toFixed(0)+'k' : '?'}`).join(' ');
     const srcCount = sourceReadings.filter(s => s.total != null).length;
     console.log(`[qwen] Towers: ${towerLog}`);
-    console.log(`[qwen] Sources: ${srcCount}/8 read | Summary: input=${summaryInputTotal} tower=${summaryTowerUsage}`);
+    console.log(`[qwen] Sources: ${srcCount}/7 read | Summary: input=${summaryInputTotal} tower=${summaryTowerUsage}`);
 
     return {
       readings,

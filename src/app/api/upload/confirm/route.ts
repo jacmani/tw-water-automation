@@ -111,6 +111,7 @@ export async function POST(request: NextRequest) {
       y_day: a.y_day,
       r_day: a.r_day,
       diff: a.diff,
+      cumulative: a.cumulative ?? null,
     }));
     await supabase.from('amenities').insert(amenityRows);
 
@@ -228,15 +229,16 @@ export async function POST(request: NextRequest) {
 }
 
 // Maps an extraction `location` string (water source row) to the logbook source_name slug.
+// Handles both new template-exact names and legacy abbreviated names for backward compat.
 function sourceSlug(location: string): string | null {
   const l = location.toLowerCase();
-  if (l.includes('m+v') || l.includes('mtr')) return 'mercury_venus_tanker';
-  if (l.includes('j+n') || l.includes('jtr')) return 'jupiter_neptune_tanker';
-  if (l.includes('well 1') || l.includes('1+2+3')) return 'venus_side_well_123';
+  if (l.includes('mercury') || l.includes('m+v') || l.includes('mtr')) return 'mercury_venus_tanker';
+  if ((l.includes('jupiter') && l.includes('neptune')) || l.includes('j+n') || l.includes('jtr')) return 'jupiter_neptune_tanker';
+  if (l.includes('1 2 3') || l.includes('well 1') || l.includes('1+2+3')) return 'venus_side_well_123';
   if (l.includes('well 4') || l.includes('4+b1') || l.includes('b1+b2')) return 'venus_side_well_4';
-  if (l.includes('well 5') || l.includes('n well 5')) return 'neptune_side_well_5';
-  if (l.includes('well 6') || l.includes('n well 6')) return 'neptune_side_well_6';
-  if (l.includes('open') || l.includes('outside')) return 'open_well';
+  if (l.includes('well 5') || l.includes('neptune side well 5')) return 'neptune_side_well_5';
+  if (l.includes('well 6') || l.includes('neptune side well 6')) return 'neptune_side_well_6';
+  if (l.includes('open')) return 'open_well';
   return null;
 }
 
@@ -297,7 +299,7 @@ async function mirrorToLogbook(
     await supabase.from('input_source_readings').upsert(srcRows, { onConflict: 'log_date,source_name' });
   }
 
-  // 4. Amenity meter readings (section → amenity_type, meter_name → location)
+  // 4. Amenity meter readings (Car Wash + Swimming Pool → amenity_meter_readings)
   const amenityRows = (extraction.amenities ?? [])
     .filter((a) => a.section === 'Car Wash' || a.section === 'Swimming Pool')
     .map((a) => ({
@@ -307,10 +309,28 @@ async function mirrorToLogbook(
       yesterday: a.y_day ?? null,
       today: a.r_day ?? null,
       consumption: a.diff ?? null,
-      cumulative: null,
+      cumulative: a.cumulative ?? null,
     }));
   if (amenityRows.length > 0) {
     await supabase.from('amenity_meter_readings').upsert(amenityRows, { onConflict: 'log_date,amenity_type,location' });
+  }
+
+  // 4b. Party Hall → utility_meters (wide table: one row per date, one column per meter)
+  const phAmenities = (extraction.amenities ?? []).filter(a => a.section === 'Party Hall');
+  if (phAmenities.length > 0) {
+    const ph = (name: string) => phAmenities.find(a => a.meter_name === name);
+    await supabase.from('utility_meters').upsert({
+      log_date: date,
+      p_hall_meter_1: ph('P Hall Meter-1')?.r_day ?? null,
+      p_hall_meter_2: ph('P Hall Meter-2')?.r_day ?? null,
+      wtp_1:          ph('WTP-1')?.r_day ?? null,
+      wtp_2:          ph('WTP-2')?.r_day ?? null,
+      venus_side_uf:  ph('Venus Side UF')?.r_day ?? null,
+      total_tankers:  ph('Total Tankers')?.r_day ?? null,
+      consumption_yesterday: null,
+      consumption_today:     null,
+      consumption_total:     null,
+    }, { onConflict: 'log_date' });
   }
 
   // 5. Water level readings (tank/time_slot → wide columns). The extraction model

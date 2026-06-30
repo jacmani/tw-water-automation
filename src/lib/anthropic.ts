@@ -32,33 +32,40 @@ Columns left to right:
   Diff — Difference
 
 === SECTION 2: SOURCE/LOCATION SECTION ===
-Rows (read in this order):
-  M+V DO with MTR, J+N DO with JTR, V Well 1+2+3, V Well 4+B1+B2, N Well 5, N Well 6, ON Outside Well, Kingsley
-Columns: R Y Day, R Today, Yesterday in Ltrs, Today in Ltrs, Total
+Rows (read in this order — these match the PRINTED labels on the sheet):
+  Mercury + Venus Tanker, Jupiter + Neptune Tanker, Venus Side Well 1 2 3, Venus Side Well 4,
+  Neptune Side Well 5, Neptune Side Well 6, Open Well
+Columns: Yesterday (Meter Reading), Today (Meter Reading), Yesterday (In Ltrs), Today (In Ltrs), Total
 
 CRITICAL — ADJACENT ROW DUPLICATION: Each source row MUST be read independently.
 Do NOT copy or assume a value from one row to the next. If two adjacent rows appear
 to have identical values, re-examine the original handwriting — this almost certainly
 means you misread one of them. This applies especially to:
-  • "M+V DO with MTR" vs "J+N DO with JTR" (these are different water sources)
-  • "V Well 1+2+3" vs "V Well 4+B1+B2" (these are different well groups)
+  • "Mercury + Venus Tanker" vs "Jupiter + Neptune Tanker" (different tanker sources)
+  • "Venus Side Well 1 2 3" vs "Venus Side Well 4" (different well groups)
 If the values genuinely match after careful re-reading, set confidence < 0.8 and
 add both field names to flagged_fields.
 
 === SECTION 3: WATER LEVEL SECTION ===
-Physical tank levels taken 4 times daily.
-Tanks: JDO, JDR, CT, MDO, MDR, Fire Tank
-Time slots: 6AM, 12PM, 6PM, 12AM
-Format: CM/Percentage — e.g. "80/26" means 80cm, 26%. Blank = not taken yet.
+Physical tank levels taken 4 times daily. The sheet shows PERCENTAGE (%) only.
+Tanks (5 columns): JDO (Jupiter DO), JDR (Jupiter DR), CT (Collection Tank), MDO (Mercury DO), MDR (Mercury DR)
+Time slots (4 rows): 6AM (06.00 AM), 12PM (12.00 PM), 6PM (06.00 PM), 12AM (12.00 AM)
+If a CM reading is written alongside the percentage, capture it in cm_reading; otherwise leave cm_reading null.
+Blank cell = not taken yet → output null.
 
 === SECTION 4: AMENITIES SECTION ===
-Car Wash: Jupiter, Mercury, Venus, Neptune
-Swimming Pool: Meter 3, Meter 4, Meter 5
-Columns: Y Day, R Day, Diff
+CAR WASH (4 columns): Jupiter, Mercury, Venus, Neptune
+  Rows: YESTERDAY (meter reading), TODAY (meter reading), CONSUMPTION (diff), CUMULATIVE
+  → Output y_day, r_day, diff, cumulative for each.
+
+SWIMMING POOL (3 columns): Meter-1, Meter-2, Meter-3
+  Rows: YESTERDAY, TODAY, CONSUMPTION, CUMULATIVE
+  → Output y_day, r_day, diff, cumulative for each.
 
 === SECTION 5: PARTY HALL SECTION ===
-Meters: Meter 6, Meter 7, WTP1, WTP2, VUF, JUF, Venus STP
-Columns: Y Day, T Day, Diff
+Columns (printed labels): P Hall Meter-1, P Hall Meter-2, WTP-1, WTP-2, Venus Side UF, Total Tankers
+Rows: YESTERDAY, TODAY, CONSUPTION (consumption/diff)
+→ Output y_day, r_day, diff for each. No CUMULATIVE row in this section.
 
 === SECTION 6: TOTAL INFLOW (bottom table of sheet) ===
 The bottom of the sheet is a table titled "TOTAL INFLOW" with these COLUMN headers,
@@ -154,56 +161,50 @@ Return ONLY a valid JSON object — no markdown, no explanation. Use null for bl
     }
   },
   "water_sources": [
-    {"location": "M+V DO with MTR", "r_yesterday": null, "r_today": null, "yesterday_ltrs": null, "today_ltrs": null, "total": null, "confidence": 0.0},
-    {"location": "J+N DO with JTR", "r_yesterday": null, "r_today": null, "yesterday_ltrs": null, "today_ltrs": null, "total": null, "confidence": 0.0},
-    {"location": "V Well 1+2+3", "r_yesterday": null, "r_today": null, "yesterday_ltrs": null, "today_ltrs": null, "total": null, "confidence": 0.0},
-    {"location": "V Well 4+B1+B2", "r_yesterday": null, "r_today": null, "yesterday_ltrs": null, "today_ltrs": null, "total": null, "confidence": 0.0},
-    {"location": "N Well 5", "r_yesterday": null, "r_today": null, "yesterday_ltrs": null, "today_ltrs": null, "total": null, "confidence": 0.0},
-    {"location": "N Well 6", "r_yesterday": null, "r_today": null, "yesterday_ltrs": null, "today_ltrs": null, "total": null, "confidence": 0.0},
-    {"location": "ON Outside Well", "r_yesterday": null, "r_today": null, "yesterday_ltrs": null, "today_ltrs": null, "total": null, "confidence": 0.0},
-    {"location": "Kingsley", "r_yesterday": null, "r_today": null, "yesterday_ltrs": null, "today_ltrs": null, "total": null, "confidence": 0.0}
+    {"location": "Mercury + Venus Tanker",  "r_yesterday": null, "r_today": null, "yesterday_ltrs": null, "today_ltrs": null, "total": null, "confidence": 0.0},
+    {"location": "Jupiter + Neptune Tanker","r_yesterday": null, "r_today": null, "yesterday_ltrs": null, "today_ltrs": null, "total": null, "confidence": 0.0},
+    {"location": "Venus Side Well 1 2 3",   "r_yesterday": null, "r_today": null, "yesterday_ltrs": null, "today_ltrs": null, "total": null, "confidence": 0.0},
+    {"location": "Venus Side Well 4",       "r_yesterday": null, "r_today": null, "yesterday_ltrs": null, "today_ltrs": null, "total": null, "confidence": 0.0},
+    {"location": "Neptune Side Well 5",     "r_yesterday": null, "r_today": null, "yesterday_ltrs": null, "today_ltrs": null, "total": null, "confidence": 0.0},
+    {"location": "Neptune Side Well 6",     "r_yesterday": null, "r_today": null, "yesterday_ltrs": null, "today_ltrs": null, "total": null, "confidence": 0.0},
+    {"location": "Open Well",               "r_yesterday": null, "r_today": null, "yesterday_ltrs": null, "today_ltrs": null, "total": null, "confidence": 0.0}
   ],
   "water_levels": [
-    {"tank": "JDO", "time_slot": "6AM", "cm_reading": null, "percentage": null, "confidence": 0.0},
+    {"tank": "JDO", "time_slot": "6AM",  "cm_reading": null, "percentage": null, "confidence": 0.0},
     {"tank": "JDO", "time_slot": "12PM", "cm_reading": null, "percentage": null, "confidence": 0.0},
-    {"tank": "JDO", "time_slot": "6PM", "cm_reading": null, "percentage": null, "confidence": 0.0},
+    {"tank": "JDO", "time_slot": "6PM",  "cm_reading": null, "percentage": null, "confidence": 0.0},
     {"tank": "JDO", "time_slot": "12AM", "cm_reading": null, "percentage": null, "confidence": 0.0},
-    {"tank": "JDR", "time_slot": "6AM", "cm_reading": null, "percentage": null, "confidence": 0.0},
+    {"tank": "JDR", "time_slot": "6AM",  "cm_reading": null, "percentage": null, "confidence": 0.0},
     {"tank": "JDR", "time_slot": "12PM", "cm_reading": null, "percentage": null, "confidence": 0.0},
-    {"tank": "JDR", "time_slot": "6PM", "cm_reading": null, "percentage": null, "confidence": 0.0},
+    {"tank": "JDR", "time_slot": "6PM",  "cm_reading": null, "percentage": null, "confidence": 0.0},
     {"tank": "JDR", "time_slot": "12AM", "cm_reading": null, "percentage": null, "confidence": 0.0},
-    {"tank": "CT", "time_slot": "6AM", "cm_reading": null, "percentage": null, "confidence": 0.0},
-    {"tank": "CT", "time_slot": "12PM", "cm_reading": null, "percentage": null, "confidence": 0.0},
-    {"tank": "CT", "time_slot": "6PM", "cm_reading": null, "percentage": null, "confidence": 0.0},
-    {"tank": "CT", "time_slot": "12AM", "cm_reading": null, "percentage": null, "confidence": 0.0},
-    {"tank": "MDO", "time_slot": "6AM", "cm_reading": null, "percentage": null, "confidence": 0.0},
+    {"tank": "CT",  "time_slot": "6AM",  "cm_reading": null, "percentage": null, "confidence": 0.0},
+    {"tank": "CT",  "time_slot": "12PM", "cm_reading": null, "percentage": null, "confidence": 0.0},
+    {"tank": "CT",  "time_slot": "6PM",  "cm_reading": null, "percentage": null, "confidence": 0.0},
+    {"tank": "CT",  "time_slot": "12AM", "cm_reading": null, "percentage": null, "confidence": 0.0},
+    {"tank": "MDO", "time_slot": "6AM",  "cm_reading": null, "percentage": null, "confidence": 0.0},
     {"tank": "MDO", "time_slot": "12PM", "cm_reading": null, "percentage": null, "confidence": 0.0},
-    {"tank": "MDO", "time_slot": "6PM", "cm_reading": null, "percentage": null, "confidence": 0.0},
+    {"tank": "MDO", "time_slot": "6PM",  "cm_reading": null, "percentage": null, "confidence": 0.0},
     {"tank": "MDO", "time_slot": "12AM", "cm_reading": null, "percentage": null, "confidence": 0.0},
-    {"tank": "MDR", "time_slot": "6AM", "cm_reading": null, "percentage": null, "confidence": 0.0},
+    {"tank": "MDR", "time_slot": "6AM",  "cm_reading": null, "percentage": null, "confidence": 0.0},
     {"tank": "MDR", "time_slot": "12PM", "cm_reading": null, "percentage": null, "confidence": 0.0},
-    {"tank": "MDR", "time_slot": "6PM", "cm_reading": null, "percentage": null, "confidence": 0.0},
-    {"tank": "MDR", "time_slot": "12AM", "cm_reading": null, "percentage": null, "confidence": 0.0},
-    {"tank": "Fire Tank", "time_slot": "6AM", "cm_reading": null, "percentage": null, "confidence": 0.0},
-    {"tank": "Fire Tank", "time_slot": "12PM", "cm_reading": null, "percentage": null, "confidence": 0.0},
-    {"tank": "Fire Tank", "time_slot": "6PM", "cm_reading": null, "percentage": null, "confidence": 0.0},
-    {"tank": "Fire Tank", "time_slot": "12AM", "cm_reading": null, "percentage": null, "confidence": 0.0}
+    {"tank": "MDR", "time_slot": "6PM",  "cm_reading": null, "percentage": null, "confidence": 0.0},
+    {"tank": "MDR", "time_slot": "12AM", "cm_reading": null, "percentage": null, "confidence": 0.0}
   ],
   "amenities": [
-    {"section": "Car Wash", "meter_name": "Jupiter", "y_day": null, "r_day": null, "diff": null, "confidence": 0.0},
-    {"section": "Car Wash", "meter_name": "Mercury", "y_day": null, "r_day": null, "diff": null, "confidence": 0.0},
-    {"section": "Car Wash", "meter_name": "Venus", "y_day": null, "r_day": null, "diff": null, "confidence": 0.0},
-    {"section": "Car Wash", "meter_name": "Neptune", "y_day": null, "r_day": null, "diff": null, "confidence": 0.0},
-    {"section": "Swimming Pool", "meter_name": "Meter 3", "y_day": null, "r_day": null, "diff": null, "confidence": 0.0},
-    {"section": "Swimming Pool", "meter_name": "Meter 4", "y_day": null, "r_day": null, "diff": null, "confidence": 0.0},
-    {"section": "Swimming Pool", "meter_name": "Meter 5", "y_day": null, "r_day": null, "diff": null, "confidence": 0.0},
-    {"section": "Party Hall", "meter_name": "Meter 6", "y_day": null, "r_day": null, "diff": null, "confidence": 0.0},
-    {"section": "Party Hall", "meter_name": "Meter 7", "y_day": null, "r_day": null, "diff": null, "confidence": 0.0},
-    {"section": "Party Hall", "meter_name": "WTP1", "y_day": null, "r_day": null, "diff": null, "confidence": 0.0},
-    {"section": "Party Hall", "meter_name": "WTP2", "y_day": null, "r_day": null, "diff": null, "confidence": 0.0},
-    {"section": "Party Hall", "meter_name": "VUF", "y_day": null, "r_day": null, "diff": null, "confidence": 0.0},
-    {"section": "Party Hall", "meter_name": "JUF", "y_day": null, "r_day": null, "diff": null, "confidence": 0.0},
-    {"section": "Party Hall", "meter_name": "Venus STP", "y_day": null, "r_day": null, "diff": null, "confidence": 0.0}
+    {"section": "Car Wash",      "meter_name": "Jupiter",        "y_day": null, "r_day": null, "diff": null, "cumulative": null, "confidence": 0.0},
+    {"section": "Car Wash",      "meter_name": "Mercury",        "y_day": null, "r_day": null, "diff": null, "cumulative": null, "confidence": 0.0},
+    {"section": "Car Wash",      "meter_name": "Venus",          "y_day": null, "r_day": null, "diff": null, "cumulative": null, "confidence": 0.0},
+    {"section": "Car Wash",      "meter_name": "Neptune",        "y_day": null, "r_day": null, "diff": null, "cumulative": null, "confidence": 0.0},
+    {"section": "Swimming Pool", "meter_name": "Meter-1",        "y_day": null, "r_day": null, "diff": null, "cumulative": null, "confidence": 0.0},
+    {"section": "Swimming Pool", "meter_name": "Meter-2",        "y_day": null, "r_day": null, "diff": null, "cumulative": null, "confidence": 0.0},
+    {"section": "Swimming Pool", "meter_name": "Meter-3",        "y_day": null, "r_day": null, "diff": null, "cumulative": null, "confidence": 0.0},
+    {"section": "Party Hall",    "meter_name": "P Hall Meter-1", "y_day": null, "r_day": null, "diff": null, "confidence": 0.0},
+    {"section": "Party Hall",    "meter_name": "P Hall Meter-2", "y_day": null, "r_day": null, "diff": null, "confidence": 0.0},
+    {"section": "Party Hall",    "meter_name": "WTP-1",          "y_day": null, "r_day": null, "diff": null, "confidence": 0.0},
+    {"section": "Party Hall",    "meter_name": "WTP-2",          "y_day": null, "r_day": null, "diff": null, "confidence": 0.0},
+    {"section": "Party Hall",    "meter_name": "Venus Side UF",  "y_day": null, "r_day": null, "diff": null, "confidence": 0.0},
+    {"section": "Party Hall",    "meter_name": "Total Tankers",  "y_day": null, "r_day": null, "diff": null, "confidence": 0.0}
   ],
   "summary": {
     "water_inflow": null, "well_inflow": null, "tanker_inflow": null,
