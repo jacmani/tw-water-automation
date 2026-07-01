@@ -775,6 +775,9 @@ export default function UploadPage() {
   const [posterData, setPosterData] = useState<TemplateOverallProps | null>(null);
   const [shareState, setShareState] = useState<'idle' | 'generating' | 'ready' | 'error'>('idle');
   const posterRef = useRef<HTMLDivElement>(null);
+  // Pre-generated File stored here so navigator.share() can be called
+  // immediately from the tap handler with no async work in the gesture window.
+  const posterFileRef = useRef<File | null>(null);
 
   function addLog(level: LogLevel, message: string, detail?: string, elapsed?: number) {
     const id = ++logIdRef.current;
@@ -801,6 +804,7 @@ export default function UploadPage() {
     setManualTotals({});
     setPosterData(null);
     setShareState('idle');
+    posterFileRef.current = null;
     logIdRef.current = 0;
     if (fileInputRef.current) fileInputRef.current.value = '';
   }
@@ -824,51 +828,66 @@ export default function UploadPage() {
     }
   }
 
-  async function sharePoster() {
-    if (!posterData) return;
-    setShareState('generating');
-    try {
-      // Wait for React to paint the off-screen TemplateOverall before capturing
-      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
-      if (!posterRef.current) throw new Error('poster ref not ready');
-      const dataUrl = await toPng(posterRef.current, { pixelRatio: 2, cacheBust: true });
-
-      // Convert data URL to Blob for Web Share API
-      const res = await fetch(dataUrl);
-      const blob = await res.blob();
-      const shareFile = new File([blob], `tw-overall-${posterData.date}.png`, { type: 'image/png' });
-
-      if (navigator.canShare && navigator.canShare({ files: [shareFile] })) {
-        await navigator.share({
-          files: [shareFile],
-          title: `Trinity World Water — ${posterData.date}`,
-        });
-      } else {
-        // Fallback: download
-        const link = document.createElement('a');
-        link.href = dataUrl;
-        link.download = shareFile.name;
-        link.click();
-      }
-      setShareState('ready');
-    } catch (err) {
-      // User cancelled the share sheet — not an error
-      if (err instanceof Error && err.name === 'AbortError') {
-        setShareState('ready');
-      } else {
-        setShareState('error');
-      }
-    }
-  }
-
-  // Once poster data arrives, mark ready so the button becomes tappable.
-  // We cannot auto-trigger share here — mobile browsers require a direct user gesture.
+  // Pre-generate the PNG file as soon as posterData + DOM are ready.
+  // This runs outside any user gesture so it can be fully async.
+  // The resulting File is cached in posterFileRef so the tap handler can
+  // call navigator.share() immediately with zero async work in the gesture window.
   useEffect(() => {
-    if (posterData && shareState === 'generating') {
-      setShareState('ready');
-    }
+    if (!posterData || shareState !== 'generating') return;
+    posterFileRef.current = null;
+
+    // Two rAF cycles let React paint the off-screen TemplateOverall first.
+    let cancelled = false;
+    const run = async () => {
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+      if (cancelled || !posterRef.current) { setShareState('error'); return; }
+      try {
+        const dataUrl = await toPng(posterRef.current, { pixelRatio: 2, cacheBust: true });
+        const res = await fetch(dataUrl);
+        const blob = await res.blob();
+        if (cancelled) return;
+        posterFileRef.current = new File(
+          [blob],
+          `tw-water-${posterData.date}.png`,
+          { type: 'image/png' }
+        );
+        setShareState('ready');
+      } catch {
+        if (!cancelled) setShareState('error');
+      }
+    };
+    run();
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [posterData]);
+
+  // Called directly from the button tap — must do near-zero async work so the
+  // browser's transient-activation window is not exceeded before navigator.share().
+  function sharePoster() {
+    const shareFile = posterFileRef.current;
+    if (!shareFile || !posterData) return;
+
+    if (navigator.canShare && navigator.canShare({ files: [shareFile] })) {
+      // Direct call — no await before this point, gesture context still valid.
+      navigator.share({
+        files: [shareFile],
+        title: `Trinity World Water — ${posterData.date}`,
+      }).catch((err: unknown) => {
+        // AbortError = user dismissed the sheet — not an error.
+        if (!(err instanceof Error && err.name === 'AbortError')) {
+          setShareState('error');
+        }
+      });
+    } else {
+      // Desktop or browser without file-share support → download the PNG.
+      const url = URL.createObjectURL(shareFile);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = shareFile.name;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    }
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
