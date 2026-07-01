@@ -1,4 +1,5 @@
-import { getMostRecentSheet, wasSheetUploadedToday, getTowerConsumptionForSheet, getSummaryForSheet, getTowerTrend, getMostRecentLogDate, getDashboardLogbookData } from '@/lib/supabase';
+import { getMostRecentSheet, wasSheetUploadedToday, getTowerConsumptionForSheet, getSummaryForSheet, getMostRecentLogDate, getDashboardLogbookData } from '@/lib/supabase';
+import { getTowerDashboardData } from '@/lib/towerData';
 import { TOWERS, formatMediumDate } from '@/lib/utils';
 import TowerCard from '@/components/dashboard/TowerCard';
 import TrendChart from '@/components/dashboard/TrendChart';
@@ -17,60 +18,38 @@ export const revalidate = 60;
 export default async function Dashboard() {
   const today = new Date().toISOString().split('T')[0];
 
-  const [recentSheet, trendData, hasTodaySheet, recentLogDate] = await Promise.all([
+  const [recentSheet, hasTodaySheet, recentLogDate] = await Promise.all([
     getMostRecentSheet(),
-    getTowerTrend(7),
     wasSheetUploadedToday(today),
     getMostRecentLogDate(),
   ]);
   const sheetDate = recentSheet?.date ?? today;
 
-  let towerConsumption: Awaited<ReturnType<typeof getTowerConsumptionForSheet>> = [];
-  let summary: Awaited<ReturnType<typeof getSummaryForSheet>> = null;
+  const [towerDashData, sheetData, logbookPanelData] = await Promise.all([
+    getTowerDashboardData(sheetDate),
+    recentSheet
+      ? Promise.all([
+          getTowerConsumptionForSheet(recentSheet.id),
+          getSummaryForSheet(recentSheet.id),
+        ])
+      : Promise.resolve(null),
+    recentLogDate
+      ? getDashboardLogbookData(recentLogDate)
+      : Promise.resolve({ inflow: null, latestWaterLevel: null, amenities: [] as Awaited<ReturnType<typeof getDashboardLogbookData>>['amenities'] }),
+  ]);
 
-  let logbookPanelData: Awaited<ReturnType<typeof getDashboardLogbookData>> = {
-    inflow: null, latestWaterLevel: null, amenities: [],
-  };
+  const towerConsumption = sheetData?.[0] ?? [];
+  const summary = sheetData?.[1] ?? null;
 
-  if (recentSheet) {
-    [towerConsumption, summary] = await Promise.all([
-      getTowerConsumptionForSheet(recentSheet.id),
-      getSummaryForSheet(recentSheet.id),
-    ]);
-  }
-  if (recentLogDate) {
-    logbookPanelData = await getDashboardLogbookData(recentLogDate);
-  }
-
+  // Merge per-type DO/DR from tower_consumption into the shared dashboard data
   const towers = TOWERS.map((tower) => {
+    const base = towerDashData.find((t) => t.tower === tower)!;
     const doRow = towerConsumption.find((r) => r.tower === tower && r.type === 'DO');
     const drRow = towerConsumption.find((r) => r.tower === tower && r.type === 'DR');
-    const totalToday =
-      recentSheet ? ((doRow?.total_ltrs ?? 0) + (drRow?.total_ltrs ?? 0)) || null : null;
-
-    const towerTrend = trendData
-      .filter((d) => d.tower === tower)
-      .map((d) => ({ date: d.date, total: d.total_ltrs }));
-
-    const historicalTotals = towerTrend
-      .filter((d) => d.date !== sheetDate)
-      .map((d) => d.total);
-    const sevenDayAvg =
-      historicalTotals.length > 0
-        ? historicalTotals.reduce((a, b) => a + b, 0) / historicalTotals.length
-        : null;
-
-    const sortedTrend = [...towerTrend].sort((a, b) => b.date.localeCompare(a.date));
-    const prevEntry = sortedTrend.find((d) => d.date !== sheetDate);
-
     return {
-      tower,
+      ...base,
       today_do: doRow?.total_ltrs ?? null,
       today_dr: drRow?.total_ltrs ?? null,
-      total_today: totalToday,
-      total_yesterday: prevEntry?.total ?? null,
-      seven_day_avg: sevenDayAvg,
-      trend: towerTrend,
     };
   });
 
@@ -89,12 +68,14 @@ export default async function Dashboard() {
     flagged_fields: [],
   };
 
-  const allDates = Array.from(new Set(trendData.map((d) => d.date))).sort();
+  const allDates = Array.from(
+    new Set(towers.flatMap((t) => t.trend.map((d) => d.date)))
+  ).sort();
   const chartData: TrendChartPoint[] = allDates.map((date) => {
     const point: TrendChartPoint = { date, Venus: null, Mercury: null, Neptune: null, Jupiter: null };
     TOWERS.forEach((tower) => {
-      const entry = trendData.find((d) => d.date === date && d.tower === tower);
-      if (entry) point[tower] = entry.total_ltrs;
+      const entry = towers.find((t) => t.tower === tower)?.trend.find((d) => d.date === date);
+      if (entry) point[tower] = entry.total;
     });
     return point;
   });
