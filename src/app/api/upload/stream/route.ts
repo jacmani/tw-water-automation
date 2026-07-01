@@ -181,37 +181,21 @@ export async function POST(request: NextRequest) {
         // ── Step 3: Cost-inverted extraction (free Gemini primary, Haiku last resort) ──
         log('info', `Phase 2 — primary extraction (free Gemini first)${mistralOcrResult.success ? ' + Mistral OCR hint' : ''}…`);
         const extractStart = Date.now();
-        const extracted = await extractSheetData(base64, mediaType, qwenResult, mistralOcrResult, cost);
+        const extracted = await extractSheetData(
+          base64, mediaType, qwenResult, mistralOcrResult, cost,
+          // Real-time progress callback — each internal pipeline step emits SSE immediately
+          (level, message, detail) => log(level, message, detail)
+        );
         const extractMs = Date.now() - extractStart;
 
-        // Report which engine produced the final result, from flagged_fields markers.
+        // Report final tower totals summary (pipeline steps already logged individually above)
         const fields = extracted.flagged_fields ?? [];
-        const primaryEngine = fields.find(f => f.startsWith('primary_engine:'))?.replace('primary_engine:', '') ?? 'unknown';
-        const escalated = fields.find(f => f.startsWith('escalation_engine:'));
-        const tieBroken = fields.find(f => f === 'resolved_by:free_tie_breaker');
-        const autoFixed = fields.find(f => f.includes('auto_corrected'));
-        const conf = `confidence ${(extracted.overall_confidence * 100).toFixed(0)}%`;
-
-        const primaryLabel = primaryEngine.startsWith('gemini') ? 'Gemini 2.5 Flash (free)' : 'Claude Haiku';
-        // Show the 8 tower totals the final result settled on — full depth.
         const towerSummary = (['Venus','Mercury','Neptune','Jupiter'] as const)
           .flatMap(tw => (['DO','DR'] as const).map(ty => {
             const v = extracted.tower_section?.[tw]?.[ty]?.total_ltrs;
             return `${tw[0]}${ty}=${v != null ? (v/1000).toFixed(0)+'k' : '?'}`;
           })).join(' ');
-
-        if (escalated) {
-          const reason = fields.find(f => f.startsWith('escalation_reason:'))?.replace('escalation_reason:', '') ?? '';
-          log('warn', `Agreement gate FAILED — escalating to Claude Haiku (paid)`, `reason: ${reason}`);
-          log(autoFixed ? 'warn' : 'success',
-            autoFixed ? 'Claude Haiku ✓ (with auto-correction)' : `Claude Haiku ✓ (${extractMs}ms total)`,
-            autoFixed ? 'Escalation also failed sanity — vol_today used as source of truth' : conf);
-        } else if (tieBroken) {
-          log('success', `Resolved by free tie-breaker (OpenRouter)`, `2 of 3 free engines agreed — no paid call · ${conf}`);
-        } else {
-          log('success', `${primaryLabel} ✓ — agreement gate PASSED`, `Qwen3-VL agrees, sanity OK · ${conf} · no paid call`);
-        }
-        log('info', 'Final tower totals (kL)', towerSummary);
+        log('info', `Final tower totals (kL) — ${extractMs}ms total`, towerSummary);
 
         // ── Full transparency: dump every tower row with its confidence ──────────
         for (const tw of ['Venus','Mercury','Neptune','Jupiter'] as const) {
@@ -273,6 +257,10 @@ export async function POST(request: NextRequest) {
         log('info', 'Preparing result…');
 
         // ── Build pipeline metrics for persistent storage ─────────────────────
+        const primaryEngine = fields.find(f => f.startsWith('primary_engine:'))?.replace('primary_engine:', '') ?? 'unknown';
+        const escalated = fields.find(f => f.startsWith('escalation_engine:'));
+        const tieBroken = fields.find(f => f === 'resolved_by:free_tie_breaker');
+        const autoFixed = fields.find(f => f.includes('auto_corrected'));
         const pipelineMetrics = {
           primary_engine: primaryEngine,
           escalated: !!escalated,
