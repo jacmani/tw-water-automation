@@ -7,7 +7,7 @@ import Image from 'next/image';
 import imageCompression from 'browser-image-compression';
 import { toPng } from 'html-to-image';
 import type { ExtractionResult } from '@/types';
-import { formatDate } from '@/lib/utils';
+import { formatDate, formatMediumDate } from '@/lib/utils';
 import TemplateOverall from '@/components/infographics/TemplateOverall';
 import type { TemplateOverallProps } from '@/components/infographics/TemplateOverall';
 
@@ -1057,7 +1057,12 @@ export default function UploadPage() {
             {/* Mini summary card */}
             {communityTotalForDisplay > 0 && (
               <div className="bg-slate-900 border border-slate-700 rounded-xl p-4">
-                <p className="text-slate-500 text-xs font-semibold uppercase tracking-wider mb-1">Today&apos;s Community Total</p>
+                {/* Labelled by the sheet's own reading date, not the calendar day it was
+                    uploaded — the technician uploads each morning a sheet covering the
+                    PREVIOUS day's readings, so "today" here would be wrong. */}
+                <p className="text-slate-500 text-xs font-semibold uppercase tracking-wider mb-1">
+                  Community Total{saveResult.date ? ` — ${formatMediumDate(saveResult.date)}` : ''}
+                </p>
                 <p className="text-white text-2xl font-bold">{(communityTotalForDisplay / 1000).toFixed(1)} kL</p>
                 {towerSpikesForDisplay.length > 0 && (
                   <div className="space-y-1 pt-2 mt-2 border-t border-slate-800">
