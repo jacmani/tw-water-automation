@@ -89,12 +89,25 @@ export function formatMediumDate(dateStr: string): string {
   return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+// Returns "today" as YYYY-MM-DD in IST (UTC+5:30), NOT the server/browser's local
+// calendar date. This app is IST-anchored (technician's daily 6-9 AM upload window,
+// committee's 10 AM deadline) — using raw `new Date()` here is the same bug that has
+// already been fixed multiple times elsewhere in this codebase (wasSheetUploadedToday,
+// MissingSheetAlert, upload/logbook default date): between IST 00:00-05:29, the UTC
+// calendar date is still "yesterday", so anything keying off local/UTC time reports
+// the wrong day. Use this helper (both server AND client side) instead of ad-hoc
+// `new Date().toISOString().split('T')[0]`.
+export function getISTDateString(): string {
+  return new Date(Date.now() + 5.5 * 3600000).toISOString().split('T')[0];
+}
+
 export function getTodayString(): string {
-  return new Date().toISOString().split('T')[0];
+  return getISTDateString();
 }
 
 export function isPastTenAM(): boolean {
-  return new Date().getHours() >= 10;
+  const istHour = new Date(Date.now() + 5.5 * 3600000).getUTCHours();
+  return istHour >= 10;
 }
 
 export function percentageDiff(current: number, reference: number): number {
