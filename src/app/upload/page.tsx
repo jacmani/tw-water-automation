@@ -277,24 +277,11 @@ function parseFlagCore(raw: string, idx: number): Omit<FlagInfo, 'severity' | 'r
   const lower = raw.toLowerCase();
   const color = COLORS[idx % COLORS.length];
 
-  // ── Tower readings (section 2) ────────────────────────────────────
-  // Matches both spaced ("Venus DO") and underscore ("Venus_DO", "tower_Venus_DO_total_ltrs") forms.
-  if (lower.match(/tower|venus[ _]d[or]|mercury[ _]d[or]|neptune[ _]d[or]|jupiter[ _]d[or]|venus|mercury|neptune|jupiter/)) {
-    // Plain-English gloss for the DO/DR abbreviation used on the sheet.
-    const typeGloss: Record<string, string> = { do: 'Domestic / Overhead', dr: 'Drinking water' };
-    const tm = lower.match(/(venus|mercury|neptune|jupiter)/);
-    // Accept DO/DR bounded by space OR underscore (e.g. "venus_do_total_ltrs").
-    const dm = lower.match(/[ _](do|dr)[ _]/) ?? lower.match(/\b(do|dr)\b/);
-    // Use the sheet's OWN row label first ("VENUS DO"), with the plain meaning in
-    // parentheses — so it matches exactly what the technician reads on paper.
-    const rowHint = tm && dm
-      ? `${tm[1].toUpperCase()} ${dm[1].toUpperCase()} row (${typeGloss[dm[1]]})`
-      : tm ? `${tm[1].toUpperCase()} tower rows` : 'Tower Meter Reading table (top of sheet)';
-    return { sectionY: 6, sectionH: 24, sectionName: 'Tower Meter Readings', rowHint, problem: cleanProblem(raw), color };
-  }
-
   // ── Water sources / wells & tankers (2nd METER READING table) ─────
-  if (lower.match(/water_source|source|well|tanker|kingsley/)) {
+  // MUST come before the tower check: water-source flag strings contain tower names
+  // in their location (e.g. "water_source_Mercury + Venus Tanker_total") and would
+  // otherwise be misclassified as Tower Meter Readings by the broader regex below.
+  if (lower.match(/water_source|well|tanker|kingsley/)) {
     // Row labels exactly as printed on the sheet's 2nd METER READING table.
     const srcLabels: Record<string, string> = {
       'v well 4': 'VENUS SIDE WELL 4 row',
@@ -312,6 +299,38 @@ function parseFlagCore(raw: string, idx: number): Omit<FlagInfo, 'severity' | 'r
       if (lower.includes(k)) { rowHint = v; break; }
     }
     return { sectionY: 30, sectionH: 22, sectionName: 'Wells & Tankers (METER READING)', rowHint, problem: cleanProblem(raw), color };
+  }
+
+  // ── Summary / Total Inflow (bottom of sheet) ─────────────────────
+  // MUST come before the tower check: "summary_tower_usage" contains "tower" and
+  // would be misclassified as a Tower Meter Reading without this ordering.
+  if (lower.match(/summary|input_total|tower_usage|v_side|n_side|jtr_tanker|mtr_tanker|inflow|balance/)) {
+    const fieldNames: Record<string, string> = {
+      v_side: '"WELL" column',
+      n_side: '"WELL" column',
+      jtr_tanker: '"TANKER" column',
+      mtr_tanker: '"TANKER" column',
+      input_total: '"TOTAL COLLECTION" column',
+      tower_usage: '"TOTAL USAGE" column',
+      diff: '"BALANCE" column',
+    };
+    let rowHint = 'TOTAL INFLOW table (bottom of sheet)';
+    for (const [k, v] of Object.entries(fieldNames)) {
+      if (lower.includes(k)) { rowHint = v; break; }
+    }
+    return { sectionY: 88, sectionH: 12, sectionName: 'TOTAL INFLOW (bottom of sheet)', rowHint, problem: cleanProblem(raw), color };
+  }
+
+  // ── Tower readings (section 1) ────────────────────────────────────
+  // Matches both spaced ("Venus DO") and underscore ("Venus_DO", "tower_Venus_DO_total_ltrs") forms.
+  if (lower.match(/tower|venus[ _]d[or]|mercury[ _]d[or]|neptune[ _]d[or]|jupiter[ _]d[or]|venus|mercury|neptune|jupiter/)) {
+    const typeGloss: Record<string, string> = { do: 'Domestic / Overhead', dr: 'Drinking water' };
+    const tm = lower.match(/(venus|mercury|neptune|jupiter)/);
+    const dm = lower.match(/[ _](do|dr)[ _]/) ?? lower.match(/\b(do|dr)\b/);
+    const rowHint = tm && dm
+      ? `${tm[1].toUpperCase()} ${dm[1].toUpperCase()} row (${typeGloss[dm[1]]})`
+      : tm ? `${tm[1].toUpperCase()} tower rows` : 'Tower Meter Reading table (top of sheet)';
+    return { sectionY: 6, sectionH: 24, sectionName: 'Tower Meter Readings', rowHint, problem: cleanProblem(raw), color };
   }
 
   // ── Car Wash / Swimming Pool ──────────────────────────────────────
@@ -335,25 +354,6 @@ function parseFlagCore(raw: string, idx: number): Omit<FlagInfo, 'severity' | 'r
     };
     const rowHint = slotM ? `${slotNames[slotM[1]] ?? slotM[1]} row` : 'WATER LEVEL IN PERCENTAGE table';
     return { sectionY: 64, sectionH: 14, sectionName: 'Water Level in Percentage', rowHint, problem: cleanProblem(raw), color };
-  }
-
-  // ── Summary / Total Inflow (section 7) ───────────────────────────
-  if (lower.match(/summary|input_total|tower_usage|v_side|n_side|jtr_tanker|mtr_tanker|inflow|balance/)) {
-    // Columns as printed in the bottom TOTAL INFLOW table.
-    const fieldNames: Record<string, string> = {
-      v_side: '"WELL" column',
-      n_side: '"WELL" column',
-      jtr_tanker: '"TANKER" column',
-      mtr_tanker: '"TANKER" column',
-      input_total: '"TOTAL COLLECTION" column',
-      tower_usage: '"TOTAL USAGE" column',
-      diff: '"BALANCE" column',
-    };
-    let rowHint = 'TOTAL INFLOW table (bottom of sheet)';
-    for (const [k, v] of Object.entries(fieldNames)) {
-      if (lower.includes(k)) { rowHint = v; break; }
-    }
-    return { sectionY: 88, sectionH: 12, sectionName: 'TOTAL INFLOW (bottom of sheet)', rowHint, problem: cleanProblem(raw), color };
   }
 
   // Fallback
