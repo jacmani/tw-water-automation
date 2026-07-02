@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Inter, Playfair_Display, DM_Sans } from 'next/font/google';
 import './globals.css';
 import ThemeProvider from '@/components/ThemeProvider';
@@ -20,7 +20,15 @@ const dmSans = DM_Sans({
 export const metadata: Metadata = {
   title: 'Trinity World Water Consumption',
   description: 'Daily water consumption tracking for Trinity World residential community',
-  viewport: 'width=device-width, initial-scale=1, maximum-scale=1',
+};
+
+// Next.js 14 split `viewport` out of the `metadata` export into its own export —
+// leaving it nested under `metadata` (as it was) still worked, but printed an
+// "Unsupported metadata viewport" warning on every single route on every build.
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
