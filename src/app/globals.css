@@ -52,3 +52,15 @@ body {
   left: -10000px;
   z-index: -1;
 }
+
+/* Shared section-label pattern — was previously three different class orderings
+   for the same visual intent across Dashboard, Upload, and History (audit m1).
+   Secondary/muted sections use this as-is; primary sections add .section-label--primary
+   for a slightly larger size + coloured left border (audit M1). */
+.section-label {
+  @apply text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400;
+}
+
+.section-label--primary {
+  @apply text-[13px] font-bold uppercase tracking-wider text-slate-700 dark:text-slate-200 border-l-[3px] border-blue-500 pl-2;
+}
