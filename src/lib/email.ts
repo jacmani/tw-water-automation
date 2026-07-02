@@ -304,7 +304,10 @@ function emailShell(accentColor: string, previewText: string, body: string): str
 }
 
 function spikeAlertHtml({ tower, sheetDate, currentLitres, sevenDayAvg, overagePct, color }: SpikePayload & { color: string }): string {
-  const spikeWaUrl = `https://wa.me/?text=${encodeURIComponent(`⚠ Water Alert — ${tower} Tower: ${fmt(currentLitres)} today (+${overagePct.toFixed(0)}% above 7-day avg). Date: ${sheetDate}. Please investigate. Full report: ${DASH_URL}`)}`;
+  // "on {sheetDate}", not "today" — sheetDate is the reading date printed on the
+  // sheet, which is normally the day BEFORE this alert is sent (technician uploads
+  // each morning a sheet covering the previous day's readings).
+  const spikeWaUrl = `https://wa.me/?text=${encodeURIComponent(`⚠ Water Alert — ${tower} Tower: ${fmt(currentLitres)} on ${sheetDate} (+${overagePct.toFixed(0)}% above 7-day avg). Please investigate. Full report: ${DASH_URL}`)}`;
   const body = `
     <!-- header -->
     <tr><td style="${CELL}background:rgba(127,29,29,0.30);border-bottom:1px solid #7F1D1D;">
