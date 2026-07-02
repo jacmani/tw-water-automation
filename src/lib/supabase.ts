@@ -93,11 +93,14 @@ export async function getSummaryForSheet(sheetId: string): Promise<Summary | nul
 }
 
 // Returns last N days of tower consumption totals per tower per day (non-superseded only).
+// NOTE: currently unused (superseded by getTowerDashboardData in towerData.ts, which
+// takes an explicit date rather than computing "today" itself) — kept IST-anchored
+// rather than deleted so it isn't a landmine if it's ever wired back up.
 export async function getTowerTrend(days: number = 7): Promise<
   { date: string; tower: string; total_ltrs: number }[]
 > {
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - (days - 1));
+  const cutoff = new Date(Date.now() + 5.5 * 3600000);
+  cutoff.setUTCDate(cutoff.getUTCDate() - (days - 1));
   const cutoffStr = cutoff.toISOString().split('T')[0];
 
   const { data } = await supabase
