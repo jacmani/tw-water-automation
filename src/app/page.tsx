@@ -20,7 +20,7 @@ export default async function Dashboard() {
 
   const [recentSheet, hasTodaySheet, recentLogDate] = await Promise.all([
     getMostRecentSheet(),
-    wasSheetUploadedToday(today),
+    wasSheetUploadedToday(),
     getMostRecentLogDate(),
   ]);
   const sheetDate = recentSheet?.date ?? today;
