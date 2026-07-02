@@ -68,6 +68,9 @@ CRITICAL — Handwritten digit confusion (look carefully):
   in the 100,000–200,000 range that starts with 1 — it may actually start with 7.
   e.g. 1,16,000 might actually be 1,76,000 = 176000.
 • Similarly: 6 vs 0, 3 vs 8, 4 vs 9.
+• 2 vs 5 — a closed-loop "2" can look like "5". DR (drinking water) totals are
+  normally only 5,000–40,000 — if a DR total looks like 50,000+, re-check whether
+  the leading digit is really "2" not "5".
 
 Return ONLY this JSON object, no explanation, no markdown:
 {
