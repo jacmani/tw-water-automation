@@ -85,6 +85,11 @@ Read the MAIN data row (not the CUMULATIVE row below it):
 DIGIT CONFUSION — look carefully:
 • 7 with short crossbar looks like 1 → "1,16,000" may be "1,76,000" = 176000
 • 6 vs 0, 3 vs 8, 4 vs 9
+• 2 vs 5 — a closed-loop "2" can look like "5", especially in compact 5-digit
+  DR totals (expected range only 5,000–40,000). If a DR total looks like it's
+  50,000+, re-examine whether the first digit is actually "2" not "5".
+• Read each digit of a number individually rather than as a single shape —
+  digits in a tightly-written row can visually bleed into each other.
 
 Return ONLY this JSON, no explanation, no markdown:
 {
