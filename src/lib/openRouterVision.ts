@@ -58,6 +58,10 @@ Look ONLY at Section 1 — the Tower Section at the TOP of the sheet.
 It has 4 towers: Venus, Mercury, Neptune, Jupiter.
 Each tower has 2 rows: DO (Domestic/overhead) and DR (Drinking water).
 Find the "Total Litres" column (3rd column from left) for each of the 8 rows.
+IMPORTANT: this is a number written directly on the sheet — transcribe the actual
+handwritten digits. Do NOT calculate it from the yesterday/today meter columns;
+the technician's written total does not always match (today − yesterday), and
+substituting a computed value for what's actually written is an extraction error.
 
 CRITICAL — Indian number format: commas follow Indian convention.
 Examples: 1,76,000 = 176000 | 1,98,000 = 198000 | 2,54,000 = 254000
