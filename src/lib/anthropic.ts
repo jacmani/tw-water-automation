@@ -805,13 +805,9 @@ export async function extractSheetData(
   cost?: CostTracker,
   progress?: ExtractionProgressFn
 ): Promise<ExtractionResult> {
-  const result = await extractSheetDataInner(base64Image, mediaType, qwenResult, mistralOcr, cost, progress);
-  return enforceHardCeilings(result, qwenResult, lastOpenRouterResult);
+  const { result, openRouterResult } = await extractSheetDataInner(base64Image, mediaType, qwenResult, mistralOcr, cost, progress);
+  return enforceHardCeilings(result, qwenResult, openRouterResult);
 }
-
-// Captures the OpenRouter tie-breaker result (if it ran) so the public wrapper's
-// final enforceHardCeilings pass can also benefit from it.
-let lastOpenRouterResult: OpenRouterVisionResult | undefined;
 
 async function extractSheetDataInner(
   base64Image: string,
@@ -820,8 +816,13 @@ async function extractSheetDataInner(
   mistralOcr?: MistralOcrResult,
   cost?: CostTracker,
   progress?: ExtractionProgressFn
-): Promise<ExtractionResult> {
-  lastOpenRouterResult = undefined;
+): Promise<{ result: ExtractionResult; openRouterResult: OpenRouterVisionResult | undefined }> {
+  // Local to this call — NOT module-level. A module-level singleton here (as this used
+  // to be, mirroring the just-removed lastClaudeUsage) would let two concurrent uploads
+  // on the same warm server process interleave across await points and read back each
+  // other's OpenRouter result, corrupting one sheet's sanity check with another sheet's
+  // data. Threading it through the return value instead makes that structurally impossible.
+  let openRouterResult: OpenRouterVisionResult | undefined;
   const ocrTranscript = mistralOcr?.success ? mistralOcr.markdown : undefined;
 
   // Record the free engines that already ran in Phase 1 (parallel, by the route).
@@ -852,7 +853,7 @@ async function extractSheetDataInner(
   if (gateClean) {
     console.log('[extraction] Agreement gate PASSED → accepting free result, no paid call');
     progress?.('success', 'Agreement gate PASSED — Qwen agrees, sanity OK', 'accepting free result · no paid call');
-    return result;
+    return { result, openRouterResult };
   }
 
   const gateFailReasons: string[] = [];
@@ -876,7 +877,7 @@ async function extractSheetDataInner(
     progress?.('info', 'Free tie-breaker — calling OpenRouter (Qwen2.5-VL-32B)…', 'free · 3rd independent engine');
     const t0 = Date.now();
     const openRouter = await extractTowerTotalsWithOpenRouter(base64Image, mediaType);
-    lastOpenRouterResult = openRouter;
+    openRouterResult = openRouter;
     const ms = Date.now() - t0;
     if (openRouter.success) {
       cost?.addFree('OpenRouter (tie-breaker)', 'free tier');
@@ -896,17 +897,26 @@ async function extractSheetDataInner(
       } else {
         progress?.('success', `Tie-breaker resolved all ${resolved} disputed row(s)`, 'no paid call needed');
       }
-      // Re-run sanity after free corrections — may now be clean.
-      if (!stillNeedsPaid && !checkSanity(result, qwenResult, openRouter).violated) {
+      // Re-run sanity after free corrections — may now be clean. IMPORTANT: if it's
+      // STILL violated after the tie-breaker claims to have "resolved" every disputed
+      // row, that is NOT actually resolved — this used to fall through to `if
+      // (!stillNeedsPaid) return result` below and silently ship a value that fails
+      // its own sanity check. Force paid escalation instead.
+      const postCorrectionSanity = checkSanity(result, qwenResult, openRouter);
+      if (!stillNeedsPaid && !postCorrectionSanity.violated) {
         result.flagged_fields = [...(result.flagged_fields ?? []), 'resolved_by:free_tie_breaker'];
         console.log('[extraction] Resolved entirely by free engines → no paid call');
-        return result;
+        return { result, openRouterResult };
+      }
+      if (postCorrectionSanity.violated) {
+        console.warn('[extraction] Tie-breaker "resolved" all rows but result STILL fails sanity → forcing paid escalation instead of returning it');
+        stillNeedsPaid = true;
       }
     }
   }
 
   if (!stillNeedsPaid) {
-    return result;
+    return { result, openRouterResult };
   }
 
   // ── Phase 2.4: PAID escalation to Claude Haiku (last resort — NO Opus) ───────
@@ -924,11 +934,11 @@ async function extractSheetDataInner(
   if (lowConfidence) reasons.push('low_confidence');
 
   // Run sanity on Haiku too — the escalation engine can share the same misread.
-  // Passing qwenResult/lastOpenRouterResult here is the crux of the fix: if Haiku
+  // Passing qwenResult/openRouterResult here is the crux of the fix: if Haiku
   // ALSO breaches sanity on the same row, prefer Qwen's (different visual encoder)
   // reading over Haiku's own vol_today — the same row's handwriting can fool both
   // Gemini and Haiku identically, but is much less likely to fool Qwen the same way.
-  const haikuSanity = checkSanity(haikuResult, qwenResult, lastOpenRouterResult);
+  const haikuSanity = checkSanity(haikuResult, qwenResult, openRouterResult);
   if (haikuSanity.violated && haikuSanity.corrections.length > 0) {
     console.warn('[extraction] Haiku escalation ALSO failed sanity → auto-correcting (independent engine preferred over vol_today)');
     applyCorrections(haikuResult, haikuSanity.corrections);
@@ -947,5 +957,5 @@ async function extractSheetDataInner(
       `escalation_reason:${reasons.join('|')}`,
     ];
   }
-  return haikuResult;
+  return { result: haikuResult, openRouterResult };
 }
