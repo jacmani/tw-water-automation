@@ -248,19 +248,12 @@ export interface ClaudeUsage {
   cache_read_input_tokens?: number;
 }
 
-// Captures the usage of the most recent runExtraction call so callers can cost it
-// without threading the raw SDK response everywhere.
-let lastClaudeUsage: ClaudeUsage | undefined;
-export function getLastClaudeUsage(): ClaudeUsage | undefined {
-  return lastClaudeUsage;
-}
-
 async function runExtraction(
   base64Image: string,
   mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
   model: string,
   ocrTranscript?: string
-): Promise<ExtractionResult> {
+): Promise<{ result: ExtractionResult; usage: ClaudeUsage | undefined }> {
   // Build messages array — image always first, OCR transcript appended if available.
   // The transcript gives Haiku a structured text reference to resolve digit ambiguities.
   // We use 'as Parameters<...>[0]["messages"][0]["content"]' to satisfy the beta SDK's
@@ -288,8 +281,7 @@ async function runExtraction(
     ],
   });
 
-  // Capture token usage for cost reporting (input + output + cache reads).
-  lastClaudeUsage = {
+  const usage: ClaudeUsage | undefined = {
     input_tokens: response.usage?.input_tokens,
     output_tokens: response.usage?.output_tokens,
     cache_read_input_tokens: (response.usage as { cache_read_input_tokens?: number })?.cache_read_input_tokens,
@@ -306,7 +298,7 @@ async function runExtraction(
 
   const parsed: ExtractionResult = JSON.parse(jsonStr);
   if (!parsed.flagged_fields) parsed.flagged_fields = [];
-  return parsed;
+  return { result: parsed, usage };
 }
 
 // Physical ceilings — values above these are impossible for this complex.
@@ -765,18 +757,18 @@ async function runPrimaryExtraction(
     // Gemini unavailable → fall back to Haiku as primary so uploads never dead-end.
     console.warn('[extraction] Gemini primary unavailable → falling back to Haiku as primary');
     progress?.('warn', 'Gemini unavailable — falling back to Claude Haiku', 'paid · last resort');
-    const haiku = await runExtraction(base64Image, mediaType, HAIKU_MODEL, ocrTranscript);
-    cost?.addClaude('Claude Haiku (primary fallback)', getLastClaudeUsage());
+    const { result: haiku, usage: haikuUsage } = await runExtraction(base64Image, mediaType, HAIKU_MODEL, ocrTranscript);
+    cost?.addClaude('Claude Haiku (primary fallback)', haikuUsage);
     progress?.('warn', 'Claude Haiku ✓ (primary fallback)', `confidence ${(haiku.overall_confidence * 100).toFixed(0)}%`);
     return { result: haiku, engine: 'haiku-primary-fallback' };
   }
 
   progress?.('info', 'Claude Haiku reading full sheet…', 'paid · primary mode');
   const t0 = Date.now();
-  const haiku = await runExtraction(base64Image, mediaType, HAIKU_MODEL, ocrTranscript);
+  const { result: haiku, usage: haikuUsage } = await runExtraction(base64Image, mediaType, HAIKU_MODEL, ocrTranscript);
   const ms = Date.now() - t0;
   console.log(`[extraction] PRIMARY=Haiku, confidence=${haiku.overall_confidence}`);
-  cost?.addClaude('Claude Haiku (primary)', getLastClaudeUsage());
+  cost?.addClaude('Claude Haiku (primary)', haikuUsage);
   progress?.('success', `Claude Haiku ✓ (${ms}ms)`, `confidence ${(haiku.overall_confidence * 100).toFixed(0)}%`);
   return { result: haiku, engine: 'haiku' };
 }
@@ -818,8 +810,7 @@ export async function extractSheetData(
 }
 
 // Captures the OpenRouter tie-breaker result (if it ran) so the public wrapper's
-// final enforceHardCeilings pass can also benefit from it, same pattern as
-// lastClaudeUsage above.
+// final enforceHardCeilings pass can also benefit from it.
 let lastOpenRouterResult: OpenRouterVisionResult | undefined;
 
 async function extractSheetDataInner(
@@ -922,9 +913,9 @@ async function extractSheetDataInner(
   console.log('[extraction] Escalating to Claude Haiku (paid, last resort)');
   progress?.('warn', 'Escalating to Claude Haiku (paid, last resort)…', '1 paid call — ~₹0.25');
   const t0 = Date.now();
-  const haikuResult = await runExtraction(base64Image, mediaType, HAIKU_MODEL, ocrTranscript);
+  const { result: haikuResult, usage: haikuEscalationUsage } = await runExtraction(base64Image, mediaType, HAIKU_MODEL, ocrTranscript);
   const haikuMs = Date.now() - t0;
-  cost?.addClaude('Claude Haiku (escalation)', getLastClaudeUsage());
+  cost?.addClaude('Claude Haiku (escalation)', haikuEscalationUsage);
   console.log(`[extraction] Haiku escalation confidence=${haikuResult.overall_confidence}`);
 
   const reasons: string[] = [];

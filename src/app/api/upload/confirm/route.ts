@@ -67,18 +67,18 @@ export async function POST(request: NextRequest) {
 
     const towerRows = towers.flatMap((tower) =>
       (['DO', 'DR'] as const).map((type) => {
-        const d = extraction.tower_section[tower][type];
+        const d = extraction.tower_section?.[tower]?.[type];
         return {
           sheet_id: sheet.id,
           tower,
           type,
-          r_yesterday: d.r_yesterday,
-          r_today: d.r_today,
-          total_ltrs: d.total_ltrs,
-          vol_yesterday: d.vol_yesterday,
-          vol_today: d.vol_today,
-          diff: d.diff,
-          confidence: d.confidence,
+          r_yesterday: d?.r_yesterday ?? null,
+          r_today: d?.r_today ?? null,
+          total_ltrs: d?.total_ltrs ?? null,
+          vol_yesterday: d?.vol_yesterday ?? null,
+          vol_today: d?.vol_today ?? null,
+          diff: d?.diff ?? null,
+          confidence: d?.confidence ?? null,
         };
       })
     );
@@ -119,8 +119,17 @@ export async function POST(request: NextRequest) {
     const { error: amenityErr } = await supabase.from('amenities').insert(amenityRows);
     if (amenityErr) throw new Error(`[confirm] amenities insert failed: ${amenityErr.message}`);
 
-    const { confidence: _c, ...summaryFields } = extraction.summary;
-    const { error: summaryErr } = await supabase.from('summary').insert({ sheet_id: sheet.id, ...summaryFields });
+    const s = extraction.summary;
+    const { error: summaryErr } = await supabase.from('summary').insert({
+      sheet_id: sheet.id,
+      input_total: s.input_total ?? null,
+      tower_usage: s.tower_usage ?? null,
+      diff: s.diff ?? null,
+      v_side: s.v_side ?? null,
+      n_side: s.n_side ?? null,
+      jtr_tanker: s.jtr_tanker ?? null,
+      mtr_tanker: s.mtr_tanker ?? null,
+    });
     if (summaryErr) throw new Error(`[confirm] summary insert failed: ${summaryErr.message}`);
 
     await supabase
