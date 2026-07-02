@@ -11,10 +11,40 @@ interface Props {
   data: TowerDashboardData;
 }
 
+// 7-point sparkline (audit I1) — replaces "is today's number rising or falling?"
+// guesswork from a single static average with an at-a-glance trend line.
+function Sparkline({ points, color }: { points: number[]; color: string }) {
+  if (points.length < 2) return null;
+  const w = 60;
+  const h = 16;
+  const pad = 2;
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const range = max - min || 1;
+  const stepX = (w - pad * 2) / (points.length - 1);
+  const coords = points
+    .map((p, i) => {
+      const x = pad + i * stepX;
+      const y = pad + (1 - (p - min) / range) * (h - pad * 2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="flex-shrink-0 overflow-visible" aria-hidden="true">
+      <polyline points={coords} fill="none" stroke={color} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export default function TowerCard({ data }: Props) {
-  const { tower, total_today, total_yesterday, seven_day_avg, today_do, today_dr } = data;
+  const { tower, total_today, total_yesterday, seven_day_avg, today_do, today_dr, trend } = data;
   const color = TOWER_COLORS[tower];
   const textClass = TOWER_TEXT_CLASSES[tower];
+  const sparkPoints = [...trend]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((t) => t.total)
+    .filter((n): n is number => n != null)
+    .slice(-7);
 
   const isAlert = isAboveThreshold(total_today, seven_day_avg, 15);
   const diffPct =
@@ -30,9 +60,12 @@ export default function TowerCard({ data }: Props) {
       style={{ borderLeftColor: color, borderLeftWidth: 3 }}
     >
       <div className="p-3.5">
-        <p className={`text-xs font-semibold uppercase tracking-wider ${textClass}`}>
-          {tower}
-        </p>
+        <div className="flex items-center justify-between gap-2">
+          <p className={`text-xs font-semibold uppercase tracking-wider ${textClass}`}>
+            {tower}
+          </p>
+          <Sparkline points={sparkPoints} color={color} />
+        </div>
 
         <div className="mt-2 mb-3">
           {hasData ? (
