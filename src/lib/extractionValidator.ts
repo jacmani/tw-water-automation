@@ -62,11 +62,28 @@ export function validateExtraction(
     .map(w => parseFloat(w.replace(/,/g, '')))
     .filter(n => !isNaN(n));
 
+  // L1 fix: Indian-format numbers (e.g. "1,76,000") sometimes get split across a
+  // table-cell or line-break boundary by an OCR engine, e.g. tokenized as "1,76" and
+  // "000" separately. A whole-token-only match against `allNumbers` would never find
+  // "176000" in that case even though it's genuinely present in the source text, so
+  // real corroboration was being silently missed (and worse, single fragments like
+  // "000" or "1,76" can spuriously "corroborate" an unrelated value). Also try joining
+  // each pair of adjacent raw tokens (comma-stripped) as one candidate number.
+  const fragmentNumbers: number[] = [];
+  for (let i = 0; i < allWords.length - 1; i++) {
+    const joined = (allWords[i] + allWords[i + 1]).replace(/,/g, '');
+    if (/^\d{3,}$/.test(joined)) {
+      const n = parseFloat(joined);
+      if (!isNaN(n)) fragmentNumbers.push(n);
+    }
+  }
+  const allNumbersWithFragments = [...allNumbers, ...fragmentNumbers];
+
   function check(value: number | null, fieldName: string): void {
     if (value === null) return;
     // ±1% tolerance, min 0.5 for small values
     const tolerance = Math.max(Math.abs(value) * 0.01, 0.5);
-    const found = allNumbers.some(n => Math.abs(n - value) <= tolerance);
+    const found = allNumbersWithFragments.some(n => Math.abs(n - value) <= tolerance);
     if (found) {
       corroboratedNumbers++;
     } else {
