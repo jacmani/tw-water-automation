@@ -65,6 +65,12 @@ Indian number format: 1,76,000 = 176000 | 1,98,000 = 198000 | 2,54,000 = 254000
 === SECTION 1 — TOWER SECTION (top of sheet) ===
 4 towers: Venus, Mercury, Neptune, Jupiter. Each has 2 rows: DO and DR.
 Find the "Total Litres" column (3rd column) for each of the 8 rows.
+IMPORTANT: "Total Litres" is a number written directly on the sheet by the
+technician — transcribe the actual handwritten digits in that cell. Do NOT
+calculate it yourself from the yesterday/today meter reading columns; the
+technician's total does not always reconcile with (today − yesterday), and
+substituting a computed value for what's actually written is a real extraction
+error, not a fix.
 
 === SECTION 2 — SOURCE/LOCATION SECTION (middle of sheet) ===
 7 source rows. Find the "Total" column (rightmost data column) for each:
