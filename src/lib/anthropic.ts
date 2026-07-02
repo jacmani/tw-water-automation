@@ -105,9 +105,17 @@ CRITICAL HANDWRITING DISAMBIGUATION — these digit pairs are frequently confuse
   • 2 vs 5: a handwritten "2" with a flat closed loop at the base can look like "5",
     especially in cramped 5-digit DR totals. A DR total that looks like it starts
     with "5" should be re-checked against whether it actually starts with "2".
+  • 2 vs 8: a cursive "2" whose loop closes fully can look like "8". A DR total
+    that looks like it starts with "8" (e.g. "81000") should be re-checked against
+    whether the loop actually closes into a "2" (e.g. "21000") — this is a confirmed
+    real confusion pair on this template's Total Litres column, not just theoretical.
   • 0 vs 1 vs 9: in tightly-spaced digit strings, trailing "0"s and "1"s bleed into
     each other. Re-read each digit of a DR total individually rather than as a
     single glance — DR totals are only 5 digits and errors compound easily.
+  • DR totals in this complex are almost always in the 5,000–40,000 range. If your
+    first read of a DR total starts with 5, 8, or 9, treat that as a strong signal
+    to re-examine whether the true leading digit is smaller (1, 2, or 3) before
+    settling on your answer.
 When in doubt between two readings, prefer the one that falls within the expected
 sanity range AND is consistent with meter reading delta (r_today − r_yesterday).
 
@@ -330,27 +338,29 @@ export interface IndependentReading {
 }
 
 /**
- * Pick the best correction for an impossible/suspicious tower total, in priority order:
- *   1. An INDEPENDENT engine's reading (Qwen / OpenRouter) of the SAME cell, if in-range.
- *      This is the only source architecturally unlikely to share the primary engine's
- *      misread — a different visual encoder reading the same glyph.
- *   2. vol_today — same-pass, same-engine column, tightened to the EXPECTED range
- *      (not just the hard ceiling). Weaker trust than an independent engine.
- *   3. value / 10, if the over-read is a clean 10× place-value slip (Indian comma error),
- *      also tightened to the EXPECTED range.
- *   4. null — give up, force manual review.
+ * Pick the best correction for an impossible/suspicious tower total.
  *
- * IMPORTANT — raw meter delta (r_today − r_yesterday) is INTENTIONALLY NOT a candidate
- * here. Incident (2026-07-02, Mercury DR): the sheet's "Total Litres" column is a value
- * the technician writes directly — on this template it usually equals delta × 1000 (the
- * meter dial reads in different units than the totals column), but it is NOT guaranteed
- * to reconcile with the raw meter delta, and either r_yesterday or r_today can themselves
- * be misread on the exact same pass that misread total_ltrs (same handwriting, same
- * engine, same failure). Trusting raw delta silently replaced a correctly-legible
- * printed "21000" with "50021" (= 84133 − 34112) because that number happened to fall
- * inside the DR floor/ceiling bounds — a textbook false-confidence auto-correction.
- * Meter delta is too fragile to auto-apply; use independent engines or vol_today only,
- * else surface for manual review rather than fabricate a confident-looking wrong number.
+ * ONLY an INDEPENDENT engine's reading (Qwen / OpenRouter) of the SAME cell is ever
+ * auto-applied. Everything else nulls the field and forces manual review.
+ *
+ * This used to also try same-pass fallbacks (vol_today, raw meter delta, ÷10 place-value
+ * slip) in priority order. Two consecutive production incidents on the same field
+ * (Mercury DR, 2026-07-02) proved every one of those same-pass guesses can silently
+ * land on a confident-looking wrong number:
+ *   - Raw meter delta (r_today − r_yesterday) replaced a correctly-legible printed
+ *     "21000" with "50021" — the delta formula doesn't match this template (which
+ *     needs ×1000), and r_yesterday/r_today come from the SAME OCR pass that already
+ *     misread the row, so the "cross-check" wasn't independent at all.
+ *   - After removing that, the very next upload's total_ltrs was misread as ~81,000
+ *     (hard-ceiling breach), and the ÷10 "place-value slip" fallback produced "8,100"
+ *     — a number with no relationship to the true 21,000, because the actual error was
+ *     a digit misread, not a comma/place-value slip.
+ * Both were same-engine derivations dressed up as corrections. A genuinely different
+ * visual encoder (Qwen/OpenRouter) reading the SAME handwritten glyph is the only
+ * signal that isn't liable to share the primary engine's exact mistake. When that
+ * isn't available, the correct behavior is to say "I don't know — check the sheet",
+ * not to fabricate a plausible-looking number. Fail-safe (null + flag), not
+ * fail-dangerous (confident wrong digits reaching the committee dashboard).
  */
 function deriveCorrection(
   row: { total_ltrs: number | null; vol_today: number | null; r_today: number | null; r_yesterday: number | null },
@@ -359,30 +369,18 @@ function deriveCorrection(
   independent?: IndependentReading | null,
   expectedMax?: number
 ): { value: number | null; source: string } {
-  const { total_ltrs, vol_today } = row;
   // A candidate is only acceptable if it's BOTH below the impossible ceiling AND
   // above a plausibility floor. This stops us "correcting" an impossible 1.4M into an
   // equally implausible 133 L — if no candidate is plausible, we null it for manual entry.
-  const ok = (v: number) => v >= floor && v <= ceiling;
-  // Weaker (same-engine-derived) candidates are held to the tighter documented range,
-  // not just the physical ceiling — a value merely "not impossible" isn't good enough
-  // when we can't independently verify it.
+  // Independent readings are additionally held to the documented EXPECTED range when
+  // provided, not just the physical ceiling — "not impossible" isn't good enough on
+  // its own; it should also look like a real reading for this field.
   const tightMax = expectedMax ?? ceiling;
-  const okTight = (v: number) => v >= floor && v <= tightMax;
+  const ok = (v: number) => v >= floor && v <= tightMax;
 
-  // 1. Independent engine (Qwen/OpenRouter) — genuinely different visual encoder.
   if (independent?.value != null && ok(independent.value)) {
     return { value: independent.value, source: `independent_engine(${independent.source})` };
   }
-  // 2. vol_today — same-pass column, weaker trust (see doc comment above).
-  if (vol_today != null && okTight(vol_today)) return { value: vol_today, source: 'vol_today(same_engine_unverified)' };
-  // 3. clean 10× place-value slip (e.g. 1,416,000 → 141,600) — held to the tight range.
-  if (total_ltrs != null) {
-    const div10 = Math.round(total_ltrs / 10);
-    if (okTight(div10)) return { value: div10, source: 'divided_by_10(place_value_slip)' };
-  }
-  // 4. give up — null it, force manual entry. Deliberately NOT falling back to raw
-  // meter delta — see doc comment above for why that's unsafe.
   return { value: null, source: 'unrecoverable_nulled_for_manual_review' };
 }
 
@@ -511,8 +509,12 @@ function checkSanity(
 
 /**
  * Apply auto-corrections to a result in place.
- * Used when both Haiku AND Opus fail sanity — we substitute the independent vol_today
- * value for total_ltrs, flag it clearly, and lower confidence so the team knows.
+ * Used when a tower total fails sanity (impossible or clearly out of the documented
+ * range). Only two outcomes are possible now (see deriveCorrection): an independent
+ * engine (Qwen/OpenRouter) corroborated a specific value, or nothing could be safely
+ * derived and the field is nulled for manual entry. We deliberately stopped guessing
+ * from same-engine data (vol_today / meter delta / ÷10) after two production incidents
+ * where those guesses landed on confident-looking wrong numbers.
  */
 function applyCorrections(result: ExtractionResult, corrections: SanityReport['corrections']): ExtractionResult {
   for (const { tower, type, correctedTotal, source } of corrections) {
@@ -520,11 +522,8 @@ function applyCorrections(result: ExtractionResult, corrections: SanityReport['c
     if (!row) continue;
     console.warn(`[sanity] auto-correcting ${tower} ${type} total_ltrs: ${row.total_ltrs} → ${correctedTotal} (from ${source})`);
     row.total_ltrs = correctedTotal; // may be null = unrecoverable, needs manual entry
-    // Confidence reflects HOW the correction was derived, not just that one was found:
-    //   - independent engine (Qwen/OpenRouter) corroborated it → genuinely more trustworthy
-    //   - same-engine fallback (vol_today / meter delta / /10) → still unverified, the
-    //     exact failure mode that let Mercury DR 50,021 masquerade as "resolved" at 65%
-    //   - unrecoverable (null) → lowest confidence, forces manual entry
+    // independent engine corroborated it → trustworthy; unrecoverable (null) → lowest
+    // confidence, forces manual entry. There is no longer a "same-engine fallback" case.
     const isIndependent = source.startsWith('independent_engine');
     row.confidence = correctedTotal === null ? 0.4 : (isIndependent ? 0.75 : 0.5);
     result.flagged_fields = [
