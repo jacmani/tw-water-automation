@@ -122,9 +122,18 @@ If a value is outside the range, set confidence for that field to 0.6 and add
 "fieldname: out_of_range (value)" to flagged_fields. Never set the value to null
 or 0 just because it is out of range — report what you actually read.
 
-Additionally: for Tower DO rows, verify that total_ltrs ≈ (r_today − r_yesterday)
-or ≈ vol_today. If total_ltrs is more than 50% different from what the meter delta
-implies, re-read the total_ltrs cell — it is likely a digit misread.
+Additionally, as a rough plausibility guide only: on this template, total_ltrs is
+usually approximately (r_today − r_yesterday) × 1000 — the meter dial reads in a
+smaller unit than the Total Litres column. This is a SANITY CHECK, not a formula to
+compute from. "Total Litres" is a number the technician writes directly on the sheet
+— always transcribe the actual handwritten digits in that cell, even if they don't
+neatly reconcile with r_today/r_yesterday (the technician's own arithmetic is
+sometimes off, or a meter is reset/replaced — that is real-world data, not your error
+to silently "fix"). NEVER substitute a computed (r_today − r_yesterday) value for
+total_ltrs — doing so has caused confirmed extraction errors in production. If the
+written total_ltrs digits are genuinely blurry/ambiguous, use the delta×1000 guide to
+choose between competing digit readings, and lower confidence + flag the field — do
+not invent a number that was never actually written on the sheet.
 
 Expected ranges:
   Tower section total_ltrs (DO rows): 50,000 – 250,000 L
@@ -325,43 +334,55 @@ export interface IndependentReading {
  *   1. An INDEPENDENT engine's reading (Qwen / OpenRouter) of the SAME cell, if in-range.
  *      This is the only source architecturally unlikely to share the primary engine's
  *      misread — a different visual encoder reading the same glyph.
- *   2. vol_today — same-pass, same-engine column. NOT independent: if the model
- *      misread this row's handwriting once, it will very often misread the
- *      neighboring cell in the identical way, since it's the same glyph shapes
- *      under the same lighting. Kept as a weaker fallback only.
- *   3. meter delta (r_today − r_yesterday), if positive and in-range.
- *   4. value / 10, if the over-read is a clean 10× place-value slip (Indian comma error).
- *   5. null — give up, force manual review.
+ *   2. vol_today — same-pass, same-engine column, tightened to the EXPECTED range
+ *      (not just the hard ceiling). Weaker trust than an independent engine.
+ *   3. value / 10, if the over-read is a clean 10× place-value slip (Indian comma error),
+ *      also tightened to the EXPECTED range.
+ *   4. null — give up, force manual review.
+ *
+ * IMPORTANT — raw meter delta (r_today − r_yesterday) is INTENTIONALLY NOT a candidate
+ * here. Incident (2026-07-02, Mercury DR): the sheet's "Total Litres" column is a value
+ * the technician writes directly — on this template it usually equals delta × 1000 (the
+ * meter dial reads in different units than the totals column), but it is NOT guaranteed
+ * to reconcile with the raw meter delta, and either r_yesterday or r_today can themselves
+ * be misread on the exact same pass that misread total_ltrs (same handwriting, same
+ * engine, same failure). Trusting raw delta silently replaced a correctly-legible
+ * printed "21000" with "50021" (= 84133 − 34112) because that number happened to fall
+ * inside the DR floor/ceiling bounds — a textbook false-confidence auto-correction.
+ * Meter delta is too fragile to auto-apply; use independent engines or vol_today only,
+ * else surface for manual review rather than fabricate a confident-looking wrong number.
  */
 function deriveCorrection(
   row: { total_ltrs: number | null; vol_today: number | null; r_today: number | null; r_yesterday: number | null },
   ceiling: number,
   floor: number,
-  independent?: IndependentReading | null
+  independent?: IndependentReading | null,
+  expectedMax?: number
 ): { value: number | null; source: string } {
-  const { total_ltrs, vol_today, r_today, r_yesterday } = row;
+  const { total_ltrs, vol_today } = row;
   // A candidate is only acceptable if it's BOTH below the impossible ceiling AND
   // above a plausibility floor. This stops us "correcting" an impossible 1.4M into an
   // equally implausible 133 L — if no candidate is plausible, we null it for manual entry.
   const ok = (v: number) => v >= floor && v <= ceiling;
+  // Weaker (same-engine-derived) candidates are held to the tighter documented range,
+  // not just the physical ceiling — a value merely "not impossible" isn't good enough
+  // when we can't independently verify it.
+  const tightMax = expectedMax ?? ceiling;
+  const okTight = (v: number) => v >= floor && v <= tightMax;
 
   // 1. Independent engine (Qwen/OpenRouter) — genuinely different visual encoder.
   if (independent?.value != null && ok(independent.value)) {
     return { value: independent.value, source: `independent_engine(${independent.source})` };
   }
   // 2. vol_today — same-pass column, weaker trust (see doc comment above).
-  if (vol_today != null && ok(vol_today)) return { value: vol_today, source: 'vol_today(same_engine_unverified)' };
-  // 3. meter delta — fully independent of the total cell
-  if (r_today != null && r_yesterday != null) {
-    const delta = r_today - r_yesterday;
-    if (ok(delta)) return { value: delta, source: 'meter_delta(r_today-r_yesterday)' };
-  }
-  // 4. clean 10× place-value slip (e.g. 1,416,000 → 141,600)
+  if (vol_today != null && okTight(vol_today)) return { value: vol_today, source: 'vol_today(same_engine_unverified)' };
+  // 3. clean 10× place-value slip (e.g. 1,416,000 → 141,600) — held to the tight range.
   if (total_ltrs != null) {
     const div10 = Math.round(total_ltrs / 10);
-    if (ok(div10)) return { value: div10, source: 'divided_by_10(place_value_slip)' };
+    if (okTight(div10)) return { value: div10, source: 'divided_by_10(place_value_slip)' };
   }
-  // 5. give up — null it, force manual entry
+  // 4. give up — null it, force manual entry. Deliberately NOT falling back to raw
+  // meter delta — see doc comment above for why that's unsafe.
   return { value: null, source: 'unrecoverable_nulled_for_manual_review' };
 }
 
@@ -429,7 +450,7 @@ function checkSanity(
 
     // ── Hard ceiling: DR > 80k is impossible. ALWAYS derive a correction. ──
     if (t.DR?.total_ltrs != null && t.DR.total_ltrs > DR_CEILING) {
-      const c = deriveCorrection(t.DR, DR_CEILING, DR_FLOOR, independentDR);
+      const c = deriveCorrection(t.DR, DR_CEILING, DR_FLOOR, independentDR, DR_EXPECTED_MAX);
       console.warn(`[sanity] ${tower} DR total_ltrs=${t.DR.total_ltrs} > ${DR_CEILING} → correct to ${c.value} via ${c.source}`);
       violated = true;
       corrections.push({ tower, type: 'DR', correctedTotal: c.value, source: c.source });
@@ -460,7 +481,7 @@ function checkSanity(
 
     // ── Hard ceiling: DO > 300k is impossible. ALWAYS derive a correction. ──
     if (t.DO?.total_ltrs != null && t.DO.total_ltrs > DO_CEILING) {
-      const c = deriveCorrection(t.DO, DO_CEILING, DO_FLOOR, independentDO);
+      const c = deriveCorrection(t.DO, DO_CEILING, DO_FLOOR, independentDO, DO_EXPECTED_MAX);
       console.warn(`[sanity] ${tower} DO total_ltrs=${t.DO.total_ltrs} > ${DO_CEILING} → correct to ${c.value} via ${c.source}`);
       violated = true;
       corrections.push({ tower, type: 'DO', correctedTotal: c.value, source: c.source });
@@ -479,7 +500,7 @@ function checkSanity(
         // BUG FIX: do NOT blindly substitute vol_today — it can itself be impossible
         // (e.g. Venus vol_today=1,416,000). Run it through deriveCorrection so the
         // plausibility floor/ceiling is enforced; null it if nothing is plausible.
-        const c = deriveCorrection(t.DO!, DO_CEILING, DO_FLOOR, independentDO);
+        const c = deriveCorrection(t.DO!, DO_CEILING, DO_FLOOR, independentDO, DO_EXPECTED_MAX);
         corrections.push({ tower, type: 'DO', correctedTotal: c.value, source: c.source });
       }
     }
@@ -535,9 +556,10 @@ function enforceHardCeilings(
       const row = t[type];
       const ceiling = type === 'DO' ? DO_CEILING : DR_CEILING;
       const floor = type === 'DO' ? DO_FLOOR : DR_FLOOR;
+      const expectedMax = type === 'DO' ? DO_EXPECTED_MAX : DR_EXPECTED_MAX;
       if (row?.total_ltrs != null && row.total_ltrs > ceiling) {
         const independent = findIndependentReading(tower, type, qwenResult, openRouterResult);
-        const c = deriveCorrection(row, ceiling, floor, independent);
+        const c = deriveCorrection(row, ceiling, floor, independent, expectedMax);
         console.warn(`[clamp] ${tower} ${type} STILL impossible (${row.total_ltrs}) after pipeline → forcing ${c.value} via ${c.source}`);
         row.total_ltrs = c.value;
         row.confidence = Math.min(row.confidence ?? 1, c.value === null ? 0.4 : 0.5);
