@@ -105,10 +105,12 @@ function TowerCard({ data }: TowerCardProps) {
           {data.isAnomaly && <AnomalyBadge />}
         </div>
 
-        {/* Today's total */}
+        {/* Tower total for the date shown in the poster header — labelled "Total" rather
+            than "Today" since this poster is typically shared the morning AFTER the date
+            shown (technician uploads each morning a sheet covering the previous day). */}
         <div style={{ marginBottom: 6 }}>
           <div style={{ fontSize: 10, color: '#64748B', fontFamily: FONT_DM_SANS, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>
-            Today
+            Total
           </div>
           <div style={{
             fontSize: 26,
