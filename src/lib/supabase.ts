@@ -44,17 +44,32 @@ export async function getMostRecentSheet(): Promise<DailySheet | null> {
   return data;
 }
 
-export async function wasSheetUploadedToday(todayUtc: string): Promise<boolean> {
-  // Use IST date (UTC+5:30) so the boundary is midnight IST, not midnight UTC.
-  // Between 00:00–05:30 IST the UTC date is still "yesterday", which would incorrectly
-  // show the alert even though the sheet was already uploaded for the IST date.
-  const todayIST = new Date(Date.now() + 5.5 * 3600000).toISOString().split('T')[0];
+/**
+ * Has the technician done their upload today?
+ *
+ * IMPORTANT — this checks `created_at` (when the sheet was UPLOADED), never `date`
+ * (which day's readings the sheet reports on). The technician fills the physical
+ * sheet out over the course of a day, then photographs and uploads it the NEXT
+ * morning — so a sheet uploaded on the morning of, say, July 2 will always have
+ * `date = July 1`. Checking `date == today` (the old, buggy behaviour) meant this
+ * alert fired every single day even when the technician uploaded on time that
+ * morning, because the just-uploaded sheet's `date` is never "today" — it's always
+ * yesterday's reading date. This function is about the ACT of uploading, so it must
+ * key off the upload timestamp, not the reading date printed on the sheet.
+ */
+export async function wasSheetUploadedToday(): Promise<boolean> {
+  // IST calendar-day window, expressed as UTC instants for the created_at (TIMESTAMPTZ) column.
+  const nowIST = new Date(Date.now() + 5.5 * 3600000);
+  const istDateStr = nowIST.toISOString().split('T')[0]; // YYYY-MM-DD in IST
+  const istMidnightUtc = new Date(`${istDateStr}T00:00:00+05:30`);
+  const istNextMidnightUtc = new Date(istMidnightUtc.getTime() + 24 * 3600000);
+
   const { count } = await supabase
     .from('daily_sheets')
     .select('id', { count: 'exact', head: true })
-    .eq('date', todayIST)
-    .eq('processed_status', 'processed')
-    .eq('superseded', false);
+    .gte('created_at', istMidnightUtc.toISOString())
+    .lt('created_at', istNextMidnightUtc.toISOString())
+    .eq('processed_status', 'processed');
   return (count ?? 0) > 0;
 }
 
