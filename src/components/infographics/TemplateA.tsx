@@ -138,7 +138,10 @@ export default function TemplateA({ tower, date, animProgress = 1 }: Props) {
             {formatLitresFull(animatedToday)}
           </p>
           <p style={{ color: '#94A3B8', fontSize: 12, margin: '4px 0 0', fontWeight: 500 }}>
-            Today&apos;s Consumption — {formatMediumDate(date)}
+            {/* Labelled by the sheet's actual reading date, not "Today" — this poster is
+                typically shared the MORNING AFTER the date shown, since the technician
+                uploads each morning a sheet covering the previous day. */}
+            Consumption — {formatMediumDate(date)}
           </p>
           {diffPct != null && p > 0.6 && (
             <div
