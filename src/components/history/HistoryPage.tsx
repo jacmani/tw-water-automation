@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import Navbar from '@/components/Navbar';
 import { createClient } from '@supabase/supabase-js';
 import type { TowerName } from '@/types';
-import { TOWER_COLORS } from '@/lib/utils';
+import { TOWER_COLORS, getISTDateString } from '@/lib/utils';
 import { computeFlag } from './flagging';
 import { buildCsv, downloadCsv } from './csvExport';
 import type { SheetRecord, HTowerRow, HSourceRow, HSummary } from './types';
@@ -13,9 +13,12 @@ import HeatmapView from './HeatmapView';
 
 const TOWERS: TowerName[] = ['Venus', 'Mercury', 'Neptune', 'Jupiter'];
 
-function todayStr(): string { return new Date().toISOString().split('T')[0]; }
+// IST-anchored, not viewer's browser timezone — a committee member checking from
+// outside India should see the same "today" as everyone else (same fix already
+// applied to MissingSheetAlert for the same reason).
+function todayStr(): string { return getISTDateString(); }
 function daysAgoStr(n: number): string {
-  const d = new Date(Date.now() - n * 86_400_000);
+  const d = new Date(Date.now() + 5.5 * 3600000 - n * 86_400_000);
   return d.toISOString().split('T')[0];
 }
 
