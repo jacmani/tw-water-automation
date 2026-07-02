@@ -23,8 +23,10 @@ const SOURCE_LABELS: Record<string, string> = {
 };
 
 const LOC_LABELS: Record<string, string> = {
-  jupiter: 'Jupiter', mercury: 'Mercury', venus: 'Venus', neptune: 'Neptune',
-  meter_1: 'Meter 1', meter_2: 'Meter 2', meter_3: 'Meter 3',
+  // Car Wash: DB stores Pascal-case tower names
+  Jupiter: 'Jupiter', Mercury: 'Mercury', Venus: 'Venus', Neptune: 'Neptune',
+  // Swimming Pool: DB stores "Meter 1" / "Meter 2" / "Meter 3"
+  'Meter 1': 'Meter 1', 'Meter 2': 'Meter 2', 'Meter 3': 'Meter 3',
 };
 
 const SLOT_LABELS: Record<string, string> = {
@@ -316,13 +318,14 @@ export default async function LogbookPage({
             {entry.amenity_readings.some((r) => r.amenity_type === 'Car Wash') && (
               <SectionCard title="Car Wash Meters">
                 <AmenityTable rows={entry.amenity_readings} type="Car Wash" locs={['Jupiter', 'Mercury', 'Venus', 'Neptune']} />
+
               </SectionCard>
             )}
 
             {/* Swimming Pool */}
             {entry.amenity_readings.some((r) => r.amenity_type === 'Swimming Pool') && (
               <SectionCard title="Swimming Pool Meters">
-                <AmenityTable rows={entry.amenity_readings} type="Swimming Pool" locs={['Meter 3', 'Meter 4', 'Meter 5']} />
+                <AmenityTable rows={entry.amenity_readings} type="Swimming Pool" locs={['Meter 1', 'Meter 2', 'Meter 3']} />
               </SectionCard>
             )}
 

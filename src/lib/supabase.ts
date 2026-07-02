@@ -45,10 +45,14 @@ export async function getMostRecentSheet(): Promise<DailySheet | null> {
 }
 
 export async function wasSheetUploadedToday(todayUtc: string): Promise<boolean> {
+  // Use IST date (UTC+5:30) so the boundary is midnight IST, not midnight UTC.
+  // Between 00:00–05:30 IST the UTC date is still "yesterday", which would incorrectly
+  // show the alert even though the sheet was already uploaded for the IST date.
+  const todayIST = new Date(Date.now() + 5.5 * 3600000).toISOString().split('T')[0];
   const { count } = await supabase
     .from('daily_sheets')
     .select('id', { count: 'exact', head: true })
-    .gte('created_at', `${todayUtc}T00:00:00`)
+    .eq('date', todayIST)
     .eq('processed_status', 'processed')
     .eq('superseded', false);
   return (count ?? 0) > 0;
@@ -254,13 +258,22 @@ export async function getDashboardLogbookData(date: string): Promise<{
     { data: amenities },
   ] = await Promise.all([
     supabase.from('daily_inflow_summary').select('*').eq('log_date', date).single(),
-    supabase.from('water_level_readings').select('*').eq('log_date', date).order('time_slot', { ascending: false }).limit(1),
+    supabase.from('water_level_readings').select('*').eq('log_date', date),
     supabase.from('amenity_meter_readings').select('*').eq('log_date', date),
   ]);
 
+  // Pick the latest available time slot in chronological order (alphabetic sort on '00:00'
+  // would incorrectly treat midnight as the earliest entry rather than the latest).
+  const SLOT_ORDER = ['06:00', '12:00', '18:00', '00:00'];
+  const levels = (waterLevels ?? []) as WaterLevelReading[];
+  const latestWaterLevel = SLOT_ORDER.slice().reverse().reduce<WaterLevelReading | null>(
+    (found, slot) => found ?? levels.find((r) => r.time_slot === slot) ?? null,
+    null
+  );
+
   return {
     inflow: (inflow ?? null) as DailyInflowSummary | null,
-    latestWaterLevel: ((waterLevels ?? [])[0] ?? null) as WaterLevelReading | null,
+    latestWaterLevel,
     amenities: (amenities ?? []) as AmenityMeterReading[],
   };
 }

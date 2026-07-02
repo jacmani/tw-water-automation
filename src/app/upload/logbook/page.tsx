@@ -98,7 +98,7 @@ function initForm() {
   const inflow_summary: InflowRow = { water_inflow: '', well_inflow: '', tanker_inflow: '', total_usage: '', cumulative_water: '', cumulative_well: '', cumulative_tanker: '', cumulative_total_usage: '' };
 
   return {
-    log_date: new Date().toISOString().split('T')[0],
+    log_date: new Date(Date.now() + 5.5 * 3600000).toISOString().split('T')[0],
     technician_name: '',
     fm_signed: false,
     tower_readings,
@@ -225,8 +225,24 @@ export default function LogbookEntryPage() {
     });
 
     const amenityRows = Object.entries(form.amenity_readings).map(([key, r]) => {
-      const [amenity_type, ...locParts] = key.split('_');
-      const location = locParts.join('_');
+      // Keys are "car_wash_jupiter", "swimming_pool_meter_1" etc — can't split on first '_'
+      // because both prefixes contain underscores.
+      let amenity_type: string;
+      let location: string;
+      if (key.startsWith('car_wash_')) {
+        amenity_type = 'Car Wash';
+        // e.g. "car_wash_jupiter" → "Jupiter"
+        const loc = key.slice('car_wash_'.length);
+        location = loc.charAt(0).toUpperCase() + loc.slice(1);
+      } else if (key.startsWith('swimming_pool_')) {
+        amenity_type = 'Swimming Pool';
+        // e.g. "swimming_pool_meter_1" → "Meter 1"
+        const loc = key.slice('swimming_pool_'.length).replace('meter_', 'Meter ');
+        location = loc;
+      } else {
+        amenity_type = key;
+        location = key;
+      }
       const consumption = autoCalc(r.today, r.yesterday, '-');
       return { amenity_type, location, ...r, consumption };
     });

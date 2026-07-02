@@ -99,9 +99,11 @@ export function validateExtraction(
     ocrSpaceResult?.detectedDate ?? null,
   ].filter(Boolean) as string[];
 
+  // Only use an OCR date if both available sources agree — a single-source or
+  // disagreeing date is unreliable and should not override the AI extraction.
   const agreedDate =
-    candidateDates.length >= 2 && candidateDates[0] === candidateDates[1]
-      ? candidateDates[0]
+    candidateDates.length >= 2
+      ? (candidateDates[0] === candidateDates[1] ? candidateDates[0] : null)
       : candidateDates[0] ?? null;
 
   const visionDate = agreedDate;

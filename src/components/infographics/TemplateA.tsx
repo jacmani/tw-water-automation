@@ -138,7 +138,7 @@ export default function TemplateA({ tower, date, animProgress = 1 }: Props) {
             {formatLitresFull(animatedToday)}
           </p>
           <p style={{ color: '#94A3B8', fontSize: 12, margin: '4px 0 0', fontWeight: 500 }}>
-            Yesterday&apos;s Consumption — {formatMediumDate(date)}
+            Today&apos;s Consumption — {formatMediumDate(date)}
           </p>
           {diffPct != null && p > 0.6 && (
             <div

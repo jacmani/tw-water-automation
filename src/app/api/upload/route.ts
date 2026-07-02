@@ -78,12 +78,13 @@ export async function POST(request: NextRequest) {
     extracted = claudeResult;
 
     const validation = validateExtraction(extracted, visionResult, ocrSpaceResult);
-    extracted.overall_confidence = Math.min(1, extracted.overall_confidence + validation.confidenceBoost);
+    extracted.overall_confidence = Math.max(0, Math.min(1, extracted.overall_confidence + validation.confidenceBoost));
     extracted.flagged_fields = [...extracted.flagged_fields, ...validation.flags];
+    const originalDateConfidence = extracted.date_confidence;
     if (validation.dateMismatch) {
       extracted.date_confidence = 0.5;
     }
-    if (validation.visionDate !== null && extracted.date_confidence < DATE_CONFIDENCE_THRESHOLD) {
+    if (validation.visionDate !== null && originalDateConfidence < DATE_CONFIDENCE_THRESHOLD) {
       extracted.date = validation.visionDate;
     }
     visionValidated = visionResult.words.length > 0 || (ocrSpaceResult?.words.length ?? 0) > 0;
