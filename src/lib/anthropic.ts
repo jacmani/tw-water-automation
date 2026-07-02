@@ -102,8 +102,19 @@ CRITICAL HANDWRITING DISAMBIGUATION — these digit pairs are frequently confuse
   • 1 vs 7 in Indian format: "1,16,000" may actually be "1,76,000" = 176,000.
   • 6 vs 0: handwritten "0" with a tail looks like "6".
   • 3 vs 8: an open-top "8" can look like "3".
+  • 2 vs 5: a handwritten "2" with a flat closed loop at the base can look like "5",
+    especially in cramped 5-digit DR totals. A DR total that looks like it starts
+    with "5" should be re-checked against whether it actually starts with "2".
+  • 0 vs 1 vs 9: in tightly-spaced digit strings, trailing "0"s and "1"s bleed into
+    each other. Re-read each digit of a DR total individually rather than as a
+    single glance — DR totals are only 5 digits and errors compound easily.
 When in doubt between two readings, prefer the one that falls within the expected
 sanity range AND is consistent with meter reading delta (r_today − r_yesterday).
+
+IMPORTANT — do not let a misread digit in one cell contaminate a neighboring cell
+in the same row. "total_ltrs" and "vol_today" are two SEPARATE handwritten numbers,
+even when both are wrong in the same way they should still be transcribed as what
+is actually written in each cell — do not copy one into the other for convenience.
 
 === SANITY RANGES ===
 After extracting each value, verify it falls within the expected range for that field.
@@ -285,6 +296,12 @@ async function runExtraction(
 const DO_CEILING = 300_000; // DO range max is 250,000 L
 const DR_CEILING = 80_000;  // DR range max is 40,000 L
 
+// Documented EXPECTED ranges (see CLAUDE.md sanity ranges table). Values beyond the
+// hard ceiling above are physically impossible; values beyond the *expected* range
+// below are merely suspicious and warrant independent corroboration before trusting.
+const DO_EXPECTED_MAX = 250_000;
+const DR_EXPECTED_MAX = 40_000;
+
 interface SanityReport {
   violated: boolean;
   /** Fields that can be auto-corrected: tower → corrected total_ltrs.
@@ -293,16 +310,34 @@ interface SanityReport {
 }
 
 /**
- * Pick the best correction for an impossible tower total, in priority order:
- *   1. vol_today, if it's an independent in-range reading
- *   2. meter delta (r_today − r_yesterday), if positive and in-range
- *   3. value / 10, if the over-read is a clean 10× place-value slip (Indian comma error)
- *   4. null — give up, force manual review
+ * A reading of one tower/type field from an engine that is architecturally
+ * independent of whichever engine produced the primary/escalation result — i.e.
+ * Qwen3-VL-8B (DeepStack encoder) or OpenRouter's tie-breaker model. Used to
+ * corroborate (or refute) a same-pass correction candidate.
+ */
+export interface IndependentReading {
+  value: number | null;
+  source: string; // e.g. 'qwen', 'openrouter'
+}
+
+/**
+ * Pick the best correction for an impossible/suspicious tower total, in priority order:
+ *   1. An INDEPENDENT engine's reading (Qwen / OpenRouter) of the SAME cell, if in-range.
+ *      This is the only source architecturally unlikely to share the primary engine's
+ *      misread — a different visual encoder reading the same glyph.
+ *   2. vol_today — same-pass, same-engine column. NOT independent: if the model
+ *      misread this row's handwriting once, it will very often misread the
+ *      neighboring cell in the identical way, since it's the same glyph shapes
+ *      under the same lighting. Kept as a weaker fallback only.
+ *   3. meter delta (r_today − r_yesterday), if positive and in-range.
+ *   4. value / 10, if the over-read is a clean 10× place-value slip (Indian comma error).
+ *   5. null — give up, force manual review.
  */
 function deriveCorrection(
   row: { total_ltrs: number | null; vol_today: number | null; r_today: number | null; r_yesterday: number | null },
   ceiling: number,
-  floor: number
+  floor: number,
+  independent?: IndependentReading | null
 ): { value: number | null; source: string } {
   const { total_ltrs, vol_today, r_today, r_yesterday } = row;
   // A candidate is only acceptable if it's BOTH below the impossible ceiling AND
@@ -310,19 +345,23 @@ function deriveCorrection(
   // equally implausible 133 L — if no candidate is plausible, we null it for manual entry.
   const ok = (v: number) => v >= floor && v <= ceiling;
 
-  // 1. vol_today — independent column
-  if (vol_today != null && ok(vol_today)) return { value: vol_today, source: 'vol_today' };
-  // 2. meter delta — fully independent of the total cell
+  // 1. Independent engine (Qwen/OpenRouter) — genuinely different visual encoder.
+  if (independent?.value != null && ok(independent.value)) {
+    return { value: independent.value, source: `independent_engine(${independent.source})` };
+  }
+  // 2. vol_today — same-pass column, weaker trust (see doc comment above).
+  if (vol_today != null && ok(vol_today)) return { value: vol_today, source: 'vol_today(same_engine_unverified)' };
+  // 3. meter delta — fully independent of the total cell
   if (r_today != null && r_yesterday != null) {
     const delta = r_today - r_yesterday;
     if (ok(delta)) return { value: delta, source: 'meter_delta(r_today-r_yesterday)' };
   }
-  // 3. clean 10× place-value slip (e.g. 1,416,000 → 141,600)
+  // 4. clean 10× place-value slip (e.g. 1,416,000 → 141,600)
   if (total_ltrs != null) {
     const div10 = Math.round(total_ltrs / 10);
     if (ok(div10)) return { value: div10, source: 'divided_by_10(place_value_slip)' };
   }
-  // 4. give up — null it, force manual entry
+  // 5. give up — null it, force manual entry
   return { value: null, source: 'unrecoverable_nulled_for_manual_review' };
 }
 
@@ -331,12 +370,51 @@ const DO_FLOOR = 20_000; // DO rows are tens of thousands of litres
 const DR_FLOOR = 1_000;  // DR rows are at least a few thousand
 
 /**
+ * Look up an independent engine's reading for a specific tower/type field.
+ * Prefers Qwen (different visual encoder, runs on every upload) then OpenRouter
+ * (tie-breaker, only runs on disagreement). If both are present and they disagree
+ * with each other, we don't trust either — return null rather than pick one blindly.
+ */
+function findIndependentReading(
+  tower: string,
+  type: 'DO' | 'DR',
+  qwenResult?: QwenVisionResult,
+  openRouterResult?: OpenRouterVisionResult
+): IndependentReading | null {
+  const qwenVal = qwenResult?.success
+    ? qwenResult.readings.find(r => r.tower === tower && r.type === type)?.total_ltrs ?? null
+    : null;
+  const orVal = openRouterResult?.success
+    ? openRouterResult.readings.find(r => r.tower === tower && r.type === type)?.total_ltrs ?? null
+    : null;
+
+  if (qwenVal != null && orVal != null) {
+    const ratio = Math.min(qwenVal, orVal) / Math.max(qwenVal, orVal);
+    if (ratio >= TOLERANCE_RATIO) return { value: qwenVal, source: 'qwen+openrouter agree' };
+    // The two independent engines disagree with each other — no safe pick.
+    return null;
+  }
+  if (qwenVal != null) return { value: qwenVal, source: 'qwen' };
+  if (orVal != null) return { value: orVal, source: 'openrouter' };
+  return null;
+}
+
+/**
  * Structural sanity check.
  * Returns violated=true if any value is physically impossible or internally inconsistent.
  * Also returns auto-corrections: when total_ltrs disagrees with vol_today by >40%,
  * we can substitute vol_today as the corrected total (it's an independent column read).
+ *
+ * `qwenResult`/`openRouterResult`, when supplied, let corrections prefer a genuinely
+ * independent visual encoder's reading of the SAME field over same-pass columns like
+ * vol_today — closing the gap where a single engine's misread of one row's handwriting
+ * silently "self-confirms" via another cell in that same misread row.
  */
-function checkSanity(result: ExtractionResult): SanityReport {
+function checkSanity(
+  result: ExtractionResult,
+  qwenResult?: QwenVisionResult,
+  openRouterResult?: OpenRouterVisionResult
+): SanityReport {
   const towers = result.tower_section;
   const corrections: SanityReport['corrections'] = [];
   if (!towers) return { violated: false, corrections };
@@ -346,18 +424,43 @@ function checkSanity(result: ExtractionResult): SanityReport {
   for (const tower of ['Venus', 'Mercury', 'Neptune', 'Jupiter'] as const) {
     const t = towers[tower];
     if (!t) continue;
+    const independentDR = findIndependentReading(tower, 'DR', qwenResult, openRouterResult);
+    const independentDO = findIndependentReading(tower, 'DO', qwenResult, openRouterResult);
 
     // ── Hard ceiling: DR > 80k is impossible. ALWAYS derive a correction. ──
     if (t.DR?.total_ltrs != null && t.DR.total_ltrs > DR_CEILING) {
-      const c = deriveCorrection(t.DR, DR_CEILING, DR_FLOOR);
+      const c = deriveCorrection(t.DR, DR_CEILING, DR_FLOOR, independentDR);
       console.warn(`[sanity] ${tower} DR total_ltrs=${t.DR.total_ltrs} > ${DR_CEILING} → correct to ${c.value} via ${c.source}`);
       violated = true;
       corrections.push({ tower, type: 'DR', correctedTotal: c.value, source: c.source });
     }
 
+    // ── Soft range: DR > expected max (40k) but under the hard ceiling is merely
+    // suspicious — DR rows are documented 5,000–40,000 L. Only auto-correct here if
+    // an independent engine actually corroborates a different, in-range value; if not,
+    // we flag but do NOT fabricate a "correction" from the same engine's own vol_today
+    // (that produced a false sense of resolution in the Mercury DR 50,021 incident).
+    const alreadyCorrectedDR = corrections.some(c => c.tower === tower && c.type === 'DR');
+    if (!alreadyCorrectedDR && t.DR?.total_ltrs != null && t.DR.total_ltrs > DR_EXPECTED_MAX) {
+      violated = true;
+      if (independentDR?.value != null && independentDR.value <= DR_EXPECTED_MAX && independentDR.value >= DR_FLOOR) {
+        const ratio = Math.min(independentDR.value, t.DR.total_ltrs) / Math.max(independentDR.value, t.DR.total_ltrs);
+        if (ratio < TOLERANCE_RATIO) {
+          console.warn(`[sanity] ${tower} DR total_ltrs=${t.DR.total_ltrs} outside expected range, independent(${independentDR.source})=${independentDR.value} → correcting`);
+          corrections.push({ tower, type: 'DR', correctedTotal: independentDR.value, source: `independent_engine(${independentDR.source})` });
+        }
+      } else {
+        console.warn(`[sanity] ${tower} DR total_ltrs=${t.DR.total_ltrs} outside expected range (max ${DR_EXPECTED_MAX}), no independent corroboration → flagging only, not auto-correcting`);
+        result.flagged_fields = [
+          ...(result.flagged_fields ?? []),
+          `${tower}_DR_total_ltrs: ${t.DR.total_ltrs} exceeds expected DR range (max ${DR_EXPECTED_MAX}) — no independent engine corroboration, needs manual verification`,
+        ];
+      }
+    }
+
     // ── Hard ceiling: DO > 300k is impossible. ALWAYS derive a correction. ──
     if (t.DO?.total_ltrs != null && t.DO.total_ltrs > DO_CEILING) {
-      const c = deriveCorrection(t.DO, DO_CEILING, DO_FLOOR);
+      const c = deriveCorrection(t.DO, DO_CEILING, DO_FLOOR, independentDO);
       console.warn(`[sanity] ${tower} DO total_ltrs=${t.DO.total_ltrs} > ${DO_CEILING} → correct to ${c.value} via ${c.source}`);
       violated = true;
       corrections.push({ tower, type: 'DO', correctedTotal: c.value, source: c.source });
@@ -376,7 +479,7 @@ function checkSanity(result: ExtractionResult): SanityReport {
         // BUG FIX: do NOT blindly substitute vol_today — it can itself be impossible
         // (e.g. Venus vol_today=1,416,000). Run it through deriveCorrection so the
         // plausibility floor/ceiling is enforced; null it if nothing is plausible.
-        const c = deriveCorrection(t.DO!, DO_CEILING, DO_FLOOR);
+        const c = deriveCorrection(t.DO!, DO_CEILING, DO_FLOOR, independentDO);
         corrections.push({ tower, type: 'DO', correctedTotal: c.value, source: c.source });
       }
     }
@@ -396,11 +499,16 @@ function applyCorrections(result: ExtractionResult, corrections: SanityReport['c
     if (!row) continue;
     console.warn(`[sanity] auto-correcting ${tower} ${type} total_ltrs: ${row.total_ltrs} → ${correctedTotal} (from ${source})`);
     row.total_ltrs = correctedTotal; // may be null = unrecoverable, needs manual entry
-    // null correction = could not derive a safe value → lower confidence harder.
-    row.confidence = correctedTotal === null ? 0.4 : 0.65;
+    // Confidence reflects HOW the correction was derived, not just that one was found:
+    //   - independent engine (Qwen/OpenRouter) corroborated it → genuinely more trustworthy
+    //   - same-engine fallback (vol_today / meter delta / /10) → still unverified, the
+    //     exact failure mode that let Mercury DR 50,021 masquerade as "resolved" at 65%
+    //   - unrecoverable (null) → lowest confidence, forces manual entry
+    const isIndependent = source.startsWith('independent_engine');
+    row.confidence = correctedTotal === null ? 0.4 : (isIndependent ? 0.75 : 0.5);
     result.flagged_fields = [
       ...(result.flagged_fields ?? []),
-      `${tower}_${type}_total_ltrs: ${correctedTotal === null ? 'NULLED — unrecoverable, needs manual entry' : `auto-corrected to ${correctedTotal}`} (via ${source})`,
+      `${tower}_${type}_total_ltrs: ${correctedTotal === null ? 'NULLED — unrecoverable, needs manual entry' : `auto-corrected to ${correctedTotal}`} (via ${source})${isIndependent ? '' : ' — UNVERIFIED, same-engine fallback, please check against physical sheet'}`,
     ];
   }
   result.overall_confidence = Math.min(result.overall_confidence, 0.60);
@@ -413,7 +521,11 @@ function applyCorrections(result: ExtractionResult, corrections: SanityReport['c
  * which engine produced it or whether earlier escalation/correction logic ran.
  * This is the safety net whose absence let Venus DO=1,416,000 L through.
  */
-function enforceHardCeilings(result: ExtractionResult): ExtractionResult {
+function enforceHardCeilings(
+  result: ExtractionResult,
+  qwenResult?: QwenVisionResult,
+  openRouterResult?: OpenRouterVisionResult
+): ExtractionResult {
   const towers = result.tower_section;
   if (!towers) return result;
   for (const tower of ['Venus', 'Mercury', 'Neptune', 'Jupiter'] as const) {
@@ -424,7 +536,8 @@ function enforceHardCeilings(result: ExtractionResult): ExtractionResult {
       const ceiling = type === 'DO' ? DO_CEILING : DR_CEILING;
       const floor = type === 'DO' ? DO_FLOOR : DR_FLOOR;
       if (row?.total_ltrs != null && row.total_ltrs > ceiling) {
-        const c = deriveCorrection(row, ceiling, floor);
+        const independent = findIndependentReading(tower, type, qwenResult, openRouterResult);
+        const c = deriveCorrection(row, ceiling, floor, independent);
         console.warn(`[clamp] ${tower} ${type} STILL impossible (${row.total_ltrs}) after pipeline → forcing ${c.value} via ${c.source}`);
         row.total_ltrs = c.value;
         row.confidence = Math.min(row.confidence ?? 1, c.value === null ? 0.4 : 0.5);
@@ -680,8 +793,13 @@ export async function extractSheetData(
   progress?: ExtractionProgressFn
 ): Promise<ExtractionResult> {
   const result = await extractSheetDataInner(base64Image, mediaType, qwenResult, mistralOcr, cost, progress);
-  return enforceHardCeilings(result);
+  return enforceHardCeilings(result, qwenResult, lastOpenRouterResult);
 }
+
+// Captures the OpenRouter tie-breaker result (if it ran) so the public wrapper's
+// final enforceHardCeilings pass can also benefit from it, same pattern as
+// lastClaudeUsage above.
+let lastOpenRouterResult: OpenRouterVisionResult | undefined;
 
 async function extractSheetDataInner(
   base64Image: string,
@@ -691,6 +809,7 @@ async function extractSheetDataInner(
   cost?: CostTracker,
   progress?: ExtractionProgressFn
 ): Promise<ExtractionResult> {
+  lastOpenRouterResult = undefined;
   const ocrTranscript = mistralOcr?.success ? mistralOcr.markdown : undefined;
 
   // Record the free engines that already ran in Phase 1 (parallel, by the route).
@@ -714,7 +833,7 @@ async function extractSheetDataInner(
   const qwenSummaryDisagreements = findSummaryDisagreements(result, qwenSummaryInputTotal, qwenSummaryTowerUsage, 'primary', 'qwen');
   const qwenDisagreements = [...qwenTowerDisagreements, ...qwenSourceDisagreements, ...qwenSummaryDisagreements];
 
-  const sanity = checkSanity(result);
+  const sanity = checkSanity(result, qwenResult);
   const lowConfidence = result.overall_confidence < CONFIDENCE_THRESHOLD;
 
   const gateClean = qwenDisagreements.length === 0 && !sanity.violated && !lowConfidence;
@@ -745,6 +864,7 @@ async function extractSheetDataInner(
     progress?.('info', 'Free tie-breaker — calling OpenRouter (Qwen2.5-VL-32B)…', 'free · 3rd independent engine');
     const t0 = Date.now();
     const openRouter = await extractTowerTotalsWithOpenRouter(base64Image, mediaType);
+    lastOpenRouterResult = openRouter;
     const ms = Date.now() - t0;
     if (openRouter.success) {
       cost?.addFree('OpenRouter (tie-breaker)', 'free tier');
@@ -765,7 +885,7 @@ async function extractSheetDataInner(
         progress?.('success', `Tie-breaker resolved all ${resolved} disputed row(s)`, 'no paid call needed');
       }
       // Re-run sanity after free corrections — may now be clean.
-      if (!stillNeedsPaid && !checkSanity(result).violated) {
+      if (!stillNeedsPaid && !checkSanity(result, qwenResult, openRouter).violated) {
         result.flagged_fields = [...(result.flagged_fields ?? []), 'resolved_by:free_tie_breaker'];
         console.log('[extraction] Resolved entirely by free engines → no paid call');
         return result;
@@ -792,11 +912,15 @@ async function extractSheetDataInner(
   if (lowConfidence) reasons.push('low_confidence');
 
   // Run sanity on Haiku too — the escalation engine can share the same misread.
-  const haikuSanity = checkSanity(haikuResult);
+  // Passing qwenResult/lastOpenRouterResult here is the crux of the fix: if Haiku
+  // ALSO breaches sanity on the same row, prefer Qwen's (different visual encoder)
+  // reading over Haiku's own vol_today — the same row's handwriting can fool both
+  // Gemini and Haiku identically, but is much less likely to fool Qwen the same way.
+  const haikuSanity = checkSanity(haikuResult, qwenResult, lastOpenRouterResult);
   if (haikuSanity.violated && haikuSanity.corrections.length > 0) {
-    console.warn('[extraction] Haiku escalation ALSO failed sanity → auto-correcting from vol_today');
+    console.warn('[extraction] Haiku escalation ALSO failed sanity → auto-correcting (independent engine preferred over vol_today)');
     applyCorrections(haikuResult, haikuSanity.corrections);
-    progress?.('warn', `Claude Haiku ✓ (${haikuMs}ms) — sanity violation auto-corrected`, `${haikuSanity.corrections.length} value(s) replaced from vol_today column`);
+    progress?.('warn', `Claude Haiku ✓ (${haikuMs}ms) — sanity violation auto-corrected`, `${haikuSanity.corrections.length} value(s) replaced`);
     haikuResult.flagged_fields = [
       ...(haikuResult.flagged_fields ?? []),
       `escalation_engine:haiku`,
