@@ -910,7 +910,7 @@ export default function UploadPage() {
         // Fallback: stream not available, use legacy endpoint
         const legacyRes = await fetch('/api/upload', { method: 'POST', body: formData });
         const json = await legacyRes.json();
-        if (!legacyRes.ok) { setStatus('error_other'); setSaveResult({ success: false, error: json.error ?? 'Something went wrong.' }); return; }
+        if (!legacyRes.ok) { setStatus('error_other'); setSaveResult({ success: false, error: json.error ?? 'Upload failed — please try again on WiFi.' }); return; }
         setConfirmPayload({ image_url: json.image_url, extracted_date: json.extracted_date ?? null, date_confidence: json.date_confidence, date_unclear: !!json.date_unclear, extraction: json.extraction });
         setStatus(json.date_unclear ? 'date_picker' : 'confirming');
         return;
@@ -949,7 +949,7 @@ export default function UploadPage() {
               setStatus(json.date_unclear ? 'date_picker' : 'confirming');
             } else if (event.type === 'error') {
               setStatus('error_other');
-              setSaveResult({ success: false, error: event.message ?? 'Something went wrong.' });
+              setSaveResult({ success: false, error: event.message ?? 'Upload failed — please try again on WiFi.' });
             }
           } catch { /* malformed SSE line — skip */ }
         }
@@ -1154,7 +1154,7 @@ export default function UploadPage() {
         {status === 'error_other' && (
           <div className="space-y-5">
             <div className="bg-red-900/30 border border-red-700 rounded-xl p-4">
-              <p className="text-red-400 text-sm">{saveResult?.error ?? 'Something went wrong.'}</p>
+              <p className="text-red-400 text-sm">{saveResult?.error ?? 'Upload failed — please try again on WiFi.'}</p>
             </div>
             <button onClick={resetToIdle} className="w-full bg-slate-800 hover:bg-slate-700 text-white py-3 rounded-xl font-medium transition-colors">Try Again</button>
           </div>
