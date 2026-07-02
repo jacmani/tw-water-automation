@@ -5,12 +5,64 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import ThemeToggle from '@/components/ThemeToggle';
 
+// Emoji nav icons (audit C3) rendered inconsistently across OS/browser, couldn't be
+// styled with CSS (colour, stroke width), and had poor screen-reader semantics.
+// Replaced with a small outline-style inline SVG set — no new icon-library dependency,
+// consistent with the "adopt one icon system" recommendation (audit §5).
+function IconDashboard(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <rect x="3" y="3" width="7" height="9" rx="1.5" /><rect x="14" y="3" width="7" height="5" rx="1.5" />
+      <rect x="14" y="12" width="7" height="9" rx="1.5" /><rect x="3" y="16" width="7" height="5" rx="1.5" />
+    </svg>
+  );
+}
+function IconHistory(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+    </svg>
+  );
+}
+function IconLogbook(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M6 4h11a2 2 0 0 1 2 2v13a1 1 0 0 1-1 1H7a2 2 0 0 1-2-2V5a1 1 0 0 1 1-1Z" />
+      <path d="M6 4v16M9 8h6M9 12h6" />
+    </svg>
+  );
+}
+function IconCommittee(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <circle cx="9" cy="7" r="3.2" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0" />
+      <path d="M16 4.5a3.2 3.2 0 0 1 0 6.4M18.5 20a5.5 5.5 0 0 0-3.8-6.7" />
+    </svg>
+  );
+}
+function IconAlerts(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.7 21a2 2 0 0 1-3.4 0" />
+    </svg>
+  );
+}
+// Water-drop monogram — same mark used in the email header (src/lib/email.ts) so the
+// brand identity is consistent everywhere (audit C2).
+function LogoMark(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" {...props}>
+      <path d="M12 2C12 2 5 10 5 15a7 7 0 0 0 14 0C19 10 12 2 12 2z" />
+    </svg>
+  );
+}
+
 const NAV_LINKS = [
-  { href: '/',           label: 'Dashboard',  icon: '⊞' },
-  { href: '/history',    label: 'History',    icon: '📊' },
-  { href: '/logbook',    label: 'Log Book',   icon: '📒' },
-  { href: '/committee',  label: 'Committee',  icon: '👥' },
-  { href: '/alerts',     label: 'Alerts',     icon: '🔔' },
+  { href: '/',           label: 'Dashboard',  Icon: IconDashboard },
+  { href: '/history',    label: 'History',    Icon: IconHistory },
+  { href: '/logbook',    label: 'Log Book',   Icon: IconLogbook },
+  { href: '/committee',  label: 'Committee',  Icon: IconCommittee },
+  { href: '/alerts',     label: 'Alerts',     Icon: IconAlerts },
 ];
 
 export default function Navbar() {
@@ -58,22 +110,25 @@ export default function Navbar() {
             href="/"
             className="flex items-center gap-2 flex-shrink-0 group"
           >
-            <span className="text-blue-600 dark:text-blue-400 text-xl leading-none">💧</span>
+            <span className="w-7 h-7 rounded-full bg-violet-600 flex items-center justify-center flex-shrink-0">
+              <LogoMark className="w-4 h-4 text-white" />
+            </span>
             <span className="font-bold text-slate-900 dark:text-white text-sm leading-tight hidden xs:inline">
-              TW Water
+              Trinity World
             </span>
           </Link>
 
-          {/* Desktop nav links */}
+          {/* Desktop nav links — active state uses blue accent + bottom border
+              indicator (audit C3), not the previous barely-visible bg change. */}
           <nav className="hidden md:flex items-center gap-1 ml-4 flex-1">
             {NAV_LINKS.map(({ href, label }) => (
               <Link
                 key={href}
                 href={href}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                className={`px-3 py-1.5 border-b-2 text-sm font-medium transition-colors ${
                   isActive(href)
-                    ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white'
-                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800/60'
+                    ? 'border-blue-500 text-blue-700 dark:text-blue-400'
+                    : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800/60'
                 }`}
               >
                 {label}
@@ -127,7 +182,7 @@ export default function Navbar() {
           }`}
         >
           <nav className="px-4 pb-4 pt-1 border-t border-slate-100 dark:border-slate-800 space-y-0.5">
-            {NAV_LINKS.map(({ href, label, icon }) => (
+            {NAV_LINKS.map(({ href, label, Icon }) => (
               <Link
                 key={href}
                 href={href}
@@ -137,7 +192,7 @@ export default function Navbar() {
                     : 'text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
-                <span className="text-base w-6 text-center">{icon}</span>
+                <Icon className="w-[18px] h-[18px] flex-shrink-0" />
                 {label}
                 {isActive(href) && (
                   <span className="ml-auto w-1.5 h-1.5 rounded-full bg-blue-500 dark:bg-blue-400" />
