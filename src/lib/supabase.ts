@@ -280,9 +280,16 @@ export async function getDashboardLogbookData(date: string): Promise<{
     supabase.from('amenity_meter_readings').select('*').eq('log_date', date),
   ]);
 
-  // Pick the latest available time slot in chronological order (alphabetic sort on '00:00'
-  // would incorrectly treat midnight as the earliest entry rather than the latest).
-  const SLOT_ORDER = ['06:00', '12:00', '18:00', '00:00'];
+  // Pick the latest available time slot in chronological order (alphabetic sort would
+  // incorrectly treat "12AM" as earliest rather than latest).
+  // IMPORTANT: this must match the water_level_readings.time_slot CHECK constraint —
+  // migration 006_fix_check_constraints.sql changed it from '06:00'-style back to
+  // '6AM'-style ('06:00','12:00','18:00','00:00' → '6AM','12PM','6PM','12AM') to match
+  // the physical sheet's own labels, but this lookup was never updated to match. Every
+  // row in the table has always used '6AM' etc. (the only format the DB accepts), so
+  // this was comparing against a value that could never be present — Tank Levels always
+  // showed "No level readings for this date" even when data existed.
+  const SLOT_ORDER = ['6AM', '12PM', '6PM', '12AM'];
   const levels = (waterLevels ?? []) as WaterLevelReading[];
   const latestWaterLevel = SLOT_ORDER.slice().reverse().reduce<WaterLevelReading | null>(
     (found, slot) => found ?? levels.find((r) => r.time_slot === slot) ?? null,
