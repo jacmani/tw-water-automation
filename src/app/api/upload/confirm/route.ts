@@ -7,6 +7,24 @@ import { percentageDiff } from '@/lib/utils';
 
 const SPIKE_THRESHOLD = 15; // % above 7-day avg
 
+// Defensive guard against the AI extractor swapping cm_reading/percentage for the Water
+// Level section (Section 3). Every tank in this system is >100cm tall, so a correctly
+// read cell always has cm_reading (the physical depth) larger than percentage (which can
+// never exceed 100). If a row violates that — most commonly because the model swapped the
+// two numbers — this normalizes it by re-sorting the pair, regardless of which field the
+// larger number ended up in. See CLAUDE.md Section 3: "Format: CM/Percentage — e.g. 80/26
+// = 80cm occupied, 26% full."
+function normalizeWaterLevels<T extends { cm_reading: number | null; percentage: number | null }>(
+  levels: T[]
+): T[] {
+  return levels.map((l) => {
+    if (l.cm_reading != null && l.percentage != null && l.cm_reading < l.percentage) {
+      return { ...l, cm_reading: l.percentage, percentage: l.cm_reading };
+    }
+    return l;
+  });
+}
+
 export async function POST(request: NextRequest) {
   const supabase = createServerClient();
 
@@ -20,6 +38,9 @@ export async function POST(request: NextRequest) {
   const { image_url, date, extraction, date_source } = body;
   if (!image_url || !date || !extraction) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+  }
+  if (extraction.water_levels?.length) {
+    extraction.water_levels = normalizeWaterLevels(extraction.water_levels);
   }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return NextResponse.json({ error: 'Invalid date format' }, { status: 400 });
