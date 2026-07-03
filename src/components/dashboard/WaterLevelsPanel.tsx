@@ -4,8 +4,10 @@ interface Props {
   data: WaterLevelReading | null;
 }
 
+// Must match water_level_readings.time_slot CHECK constraint ('6AM'/'12PM'/'6PM'/'12AM'
+// — see migration 006_fix_check_constraints.sql).
 const SLOT_LABEL: Record<string, string> = {
-  '06:00': '6 AM', '12:00': '12 PM', '18:00': '6 PM', '00:00': '12 AM',
+  '6AM': '6 AM', '12PM': '12 PM', '6PM': '6 PM', '12AM': '12 AM',
 };
 
 function LevelBar({ label, pct }: { label: string; pct: number | null }) {
