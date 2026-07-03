@@ -144,7 +144,7 @@ function Field({ label, value, onChange, computed }: {
 }) {
   return (
     <div>
-      <label className="block text-slate-500 text-xs mb-0.5">{label}</label>
+      <label className="block text-slate-500 dark:text-slate-400 text-xs mb-0.5">{label}</label>
       <input
         type="number"
         inputMode="decimal"
@@ -154,8 +154,8 @@ function Field({ label, value, onChange, computed }: {
         placeholder={computed ? '—' : '0'}
         className={`w-full rounded-lg px-2.5 py-2 text-sm border text-right tabular-nums
           ${computed
-            ? 'bg-slate-800/50 border-slate-700 text-slate-500 cursor-default'
-            : 'bg-slate-800 border-slate-700 text-white focus:border-blue-500 focus:outline-none'
+            ? 'bg-slate-100 dark:bg-slate-800/50 border-slate-300 dark:border-slate-700 text-slate-500 dark:text-slate-400 cursor-default'
+            : 'bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:border-blue-500 focus:outline-none'
           }`}
       />
     </div>
@@ -164,7 +164,7 @@ function Field({ label, value, onChange, computed }: {
 
 function SectionHeader({ title }: { title: string }) {
   return (
-    <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-4 mt-1">{title}</p>
+    <p className="text-slate-500 dark:text-slate-400 text-xs font-semibold uppercase tracking-wider mb-4 mt-1">{title}</p>
   );
 }
 
@@ -301,21 +301,21 @@ export default function LogbookEntryPage() {
   const isLast = sectionIdx === SECTIONS.length - 1;
 
   return (
-    <main className="min-h-screen bg-slate-950 text-white flex flex-col">
+    <main className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white flex flex-col">
       {/* Header */}
-      <header className="bg-slate-900 border-b border-slate-800 px-4 py-3 sticky top-0 z-10">
+      <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-3 sticky top-0 z-10">
         <div className="max-w-xl mx-auto flex items-center gap-3">
-          <Link href="/upload" className="text-slate-400 hover:text-white transition-colors shrink-0">
+          <Link href="/upload" className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors shrink-0">
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </Link>
           <div className="min-w-0 flex-1">
-            <h1 className="text-base font-bold text-white leading-tight truncate">Log Book Entry</h1>
-            <p className="text-slate-400 text-xs">Trinity World Water Consumption</p>
+            <h1 className="text-base font-bold text-slate-900 dark:text-white leading-tight truncate">Log Book Entry</h1>
+            <p className="text-slate-500 dark:text-slate-400 text-xs">Trinity World Water Consumption</p>
           </div>
           {saved && (
-            <span className={`text-xs font-medium px-2 py-1 rounded-full shrink-0 ${saved === 'submitted' ? 'bg-emerald-900 text-emerald-400' : 'bg-slate-800 text-slate-400'}`}>
+            <span className={`text-xs font-medium px-2 py-1 rounded-full shrink-0 ${saved === 'submitted' ? 'bg-emerald-900 text-emerald-400' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'}`}>
               {saved === 'submitted' ? 'Submitted' : 'Draft saved'}
             </span>
           )}
@@ -323,14 +323,14 @@ export default function LogbookEntryPage() {
       </header>
 
       {/* Section tabs */}
-      <div className="bg-slate-900 border-b border-slate-800 overflow-x-auto scrollbar-hide">
+      <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 overflow-x-auto scrollbar-hide">
         <div className="flex px-4 gap-1 max-w-xl mx-auto py-1">
           {SECTIONS.map((s, i) => (
             <button
               key={s}
               onClick={() => setSection(s)}
               className={`shrink-0 px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap
-                ${section === s ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                ${section === s ? 'bg-blue-600 text-white' : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'}`}
             >
               {i + 1}. {s}
             </button>
@@ -345,23 +345,23 @@ export default function LogbookEntryPage() {
           <div className="space-y-4">
             <SectionHeader title="Log Book Header" />
             <div>
-              <label className="block text-slate-400 text-sm font-medium mb-1">Date</label>
+              <label className="block text-slate-500 dark:text-slate-400 text-sm font-medium mb-1">Date</label>
               <input
                 type="date"
                 value={form.log_date}
                 onChange={(e) => setForm((p) => ({ ...p, log_date: e.target.value }))}
-                className="w-full rounded-xl px-3 py-3 bg-slate-800 border border-slate-700 text-white text-sm focus:border-blue-500 focus:outline-none"
+                className="w-full rounded-xl px-3 py-3 bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white text-sm focus:border-blue-500 focus:outline-none"
               />
-              <p className="text-slate-500 text-xs mt-1">{form.log_date ? formatDate(form.log_date) : ''}</p>
+              <p className="text-slate-500 dark:text-slate-400 text-xs mt-1">{form.log_date ? formatDate(form.log_date) : ''}</p>
             </div>
             <div>
-              <label className="block text-slate-400 text-sm font-medium mb-1">Technician Name</label>
+              <label className="block text-slate-500 dark:text-slate-400 text-sm font-medium mb-1">Technician Name</label>
               <input
                 type="text"
                 value={form.technician_name}
                 onChange={(e) => setForm((p) => ({ ...p, technician_name: e.target.value }))}
                 placeholder="Enter technician name"
-                className="w-full rounded-xl px-3 py-3 bg-slate-800 border border-slate-700 text-white text-sm focus:border-blue-500 focus:outline-none"
+                className="w-full rounded-xl px-3 py-3 bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white text-sm focus:border-blue-500 focus:outline-none"
               />
             </div>
             <label className="flex items-center gap-3 cursor-pointer">
@@ -371,7 +371,7 @@ export default function LogbookEntryPage() {
                 onChange={(e) => setForm((p) => ({ ...p, fm_signed: e.target.checked }))}
                 className="w-4 h-4 rounded accent-blue-600"
               />
-              <span className="text-slate-300 text-sm">FM Signed</span>
+              <span className="text-slate-700 dark:text-slate-300 text-sm">FM Signed</span>
             </label>
           </div>
         )}
@@ -387,9 +387,9 @@ export default function LogbookEntryPage() {
                 const totalCalc = autoCalc(r.today_reading, r.yesterday_reading, '-');
                 const diffCalc = autoCalc(r.consumption_today, r.consumption_yesterday, '-');
                 return (
-                  <div key={key} className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-                    <p className="text-sm font-semibold text-white mb-3">
-                      {tower} <span className="text-slate-400">{mt}</span>
+                  <div key={key} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+                    <p className="text-sm font-semibold text-slate-900 dark:text-white mb-3">
+                      {tower} <span className="text-slate-500 dark:text-slate-400">{mt}</span>
                     </p>
                     <div className="grid grid-cols-2 gap-3">
                       <Field label="Yesterday Reading" value={r.yesterday_reading} onChange={(v) => updateTower(key, 'yesterday_reading', v)} />
@@ -414,8 +414,8 @@ export default function LogbookEntryPage() {
               const r = form.source_readings[src];
               const total = autoSum(r.consumption_yesterday, r.consumption_today);
               return (
-                <div key={src} className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-                  <p className="text-sm font-semibold text-white mb-3">{SOURCE_LABELS[src]}</p>
+                <div key={src} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+                  <p className="text-sm font-semibold text-slate-900 dark:text-white mb-3">{SOURCE_LABELS[src]}</p>
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="Yesterday Reading" value={r.yesterday_reading} onChange={(v) => updateSource(src, 'yesterday_reading', v)} />
                     <Field label="Today Reading" value={r.today_reading} onChange={(v) => updateSource(src, 'today_reading', v)} />
@@ -438,8 +438,8 @@ export default function LogbookEntryPage() {
               const r = form.amenity_readings[key];
               const cons = autoCalc(r.today, r.yesterday, '-');
               return (
-                <div key={key} className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-                  <p className="text-sm font-semibold text-white mb-3">{LOC_LABELS[loc]}</p>
+                <div key={key} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+                  <p className="text-sm font-semibold text-slate-900 dark:text-white mb-3">{LOC_LABELS[loc]}</p>
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="Yesterday" value={r.yesterday} onChange={(v) => updateAmenity(key, 'yesterday', v)} />
                     <Field label="Today" value={r.today} onChange={(v) => updateAmenity(key, 'today', v)} />
@@ -461,8 +461,8 @@ export default function LogbookEntryPage() {
               const r = form.amenity_readings[key];
               const cons = autoCalc(r.today, r.yesterday, '-');
               return (
-                <div key={key} className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-                  <p className="text-sm font-semibold text-white mb-3">{LOC_LABELS[loc]}</p>
+                <div key={key} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+                  <p className="text-sm font-semibold text-slate-900 dark:text-white mb-3">{LOC_LABELS[loc]}</p>
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="Yesterday" value={r.yesterday} onChange={(v) => updateAmenity(key, 'yesterday', v)} />
                     <Field label="Today" value={r.today} onChange={(v) => updateAmenity(key, 'today', v)} />
@@ -482,8 +482,8 @@ export default function LogbookEntryPage() {
             {WATER_LEVEL_SLOTS.map((slot) => {
               const r = form.water_levels[slot];
               return (
-                <div key={slot} className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-                  <p className="text-sm font-semibold text-white mb-3">{SLOT_LABELS[slot]}</p>
+                <div key={slot} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+                  <p className="text-sm font-semibold text-slate-900 dark:text-white mb-3">{SLOT_LABELS[slot]}</p>
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="Jupiter DO %" value={r.jupiter_do} onChange={(v) => updateLevel(slot, 'jupiter_do', v)} />
                     <Field label="Jupiter DR %" value={r.jupiter_dr} onChange={(v) => updateLevel(slot, 'jupiter_dr', v)} />
@@ -506,15 +506,15 @@ export default function LogbookEntryPage() {
         {section === 'Utilities' && (
           <div className="space-y-5">
             <SectionHeader title="Utility Meter Readings" />
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-              <p className="text-sm font-semibold text-white mb-3">Party Hall</p>
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+              <p className="text-sm font-semibold text-slate-900 dark:text-white mb-3">Party Hall</p>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="P. Hall Meter 1" value={form.utility_meters.p_hall_meter_1} onChange={(v) => updateUtil('p_hall_meter_1', v)} />
                 <Field label="P. Hall Meter 2" value={form.utility_meters.p_hall_meter_2} onChange={(v) => updateUtil('p_hall_meter_2', v)} />
               </div>
             </div>
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-              <p className="text-sm font-semibold text-white mb-3">WTP / UF</p>
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+              <p className="text-sm font-semibold text-slate-900 dark:text-white mb-3">WTP / UF</p>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="WTP 1" value={form.utility_meters.wtp_1} onChange={(v) => updateUtil('wtp_1', v)} />
                 <Field label="WTP 2" value={form.utility_meters.wtp_2} onChange={(v) => updateUtil('wtp_2', v)} />
@@ -522,8 +522,8 @@ export default function LogbookEntryPage() {
                 <Field label="Total Tankers" value={form.utility_meters.total_tankers} onChange={(v) => updateUtil('total_tankers', v)} />
               </div>
             </div>
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-              <p className="text-sm font-semibold text-white mb-3">Consumption</p>
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+              <p className="text-sm font-semibold text-slate-900 dark:text-white mb-3">Consumption</p>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Consumption Yesterday" value={form.utility_meters.consumption_yesterday} onChange={(v) => updateUtil('consumption_yesterday', v)} />
                 <Field label="Consumption Today" value={form.utility_meters.consumption_today} onChange={(v) => updateUtil('consumption_today', v)} />
@@ -537,8 +537,8 @@ export default function LogbookEntryPage() {
         {section === 'Inflow Summary' && (
           <div className="space-y-5">
             <SectionHeader title="Daily Inflow Summary" />
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-              <p className="text-sm font-semibold text-white mb-3">Today&apos;s Inflow</p>
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+              <p className="text-sm font-semibold text-slate-900 dark:text-white mb-3">Today&apos;s Inflow</p>
               {(() => {
                 const inf = form.inflow_summary;
                 const total_collection = autoSum(inf.water_inflow, inf.well_inflow, inf.tanker_inflow);
@@ -556,8 +556,8 @@ export default function LogbookEntryPage() {
                 );
               })()}
             </div>
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-              <p className="text-sm font-semibold text-white mb-3">Cumulative</p>
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+              <p className="text-sm font-semibold text-slate-900 dark:text-white mb-3">Cumulative</p>
               {(() => {
                 const inf = form.inflow_summary;
                 const cumTotal = autoSum(inf.cumulative_water, inf.cumulative_well, inf.cumulative_tanker);
@@ -580,8 +580,8 @@ export default function LogbookEntryPage() {
 
         {/* Error */}
         {error && (
-          <div className="mt-4 bg-red-900/30 border border-red-700 rounded-xl p-3">
-            <p className="text-red-400 text-sm">{error}</p>
+          <div className="mt-4 bg-red-100 dark:bg-red-900/30 border border-red-300 dark:border-red-700 rounded-xl p-3">
+            <p className="text-red-600 dark:text-red-400 text-sm">{error}</p>
           </div>
         )}
 
@@ -591,7 +591,7 @@ export default function LogbookEntryPage() {
             {!isFirst && (
               <button
                 onClick={() => setSection(SECTIONS[sectionIdx - 1])}
-                className="flex-1 bg-slate-800 hover:bg-slate-700 text-white py-3 rounded-xl font-medium text-sm transition-colors"
+                className="flex-1 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-900 dark:text-white py-3 rounded-xl font-medium text-sm transition-colors"
               >
                 ← Prev
               </button>
@@ -599,7 +599,7 @@ export default function LogbookEntryPage() {
             {!isLast && (
               <button
                 onClick={() => setSection(SECTIONS[sectionIdx + 1])}
-                className="flex-1 bg-slate-800 hover:bg-slate-700 text-white py-3 rounded-xl font-medium text-sm transition-colors"
+                className="flex-1 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-900 dark:text-white py-3 rounded-xl font-medium text-sm transition-colors"
               >
                 Next →
               </button>
@@ -609,7 +609,7 @@ export default function LogbookEntryPage() {
             <button
               onClick={() => save(false)}
               disabled={saving}
-              className="flex-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white py-3 rounded-xl font-medium text-sm transition-colors"
+              className="flex-1 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 disabled:opacity-50 text-slate-900 dark:text-white py-3 rounded-xl font-medium text-sm transition-colors"
             >
               {saving ? 'Saving…' : 'Save Draft'}
             </button>
@@ -624,7 +624,7 @@ export default function LogbookEntryPage() {
           {saved && (
             <Link
               href={`/logbook?date=${form.log_date}`}
-              className="block text-center text-blue-400 hover:text-blue-300 text-sm transition-colors py-1"
+              className="block text-center text-blue-600 dark:text-blue-400 hover:text-blue-500 dark:hover:text-blue-300 text-sm transition-colors py-1"
             >
               View log entry →
             </Link>
