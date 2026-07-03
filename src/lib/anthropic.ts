@@ -329,6 +329,12 @@ const INPUT_TOTAL_MAX = 900_000;
 const TOWER_USAGE_MIN = 300_000;
 const TOWER_USAGE_MAX = 800_000;
 
+// Section 2 (water_sources) — same gap, one tier down: the documented "Total column:
+// 20,000-400,000 L" range was only ever prompt text, never enforced. Flag-only (no
+// auto-correction source exists for this field either).
+const SOURCE_TOTAL_MIN = 20_000;
+const SOURCE_TOTAL_MAX = 400_000;
+
 interface SanityReport {
   violated: boolean;
   /** Fields that can be auto-corrected: tower → corrected total_ltrs.
@@ -577,6 +583,22 @@ function checkSanity(
           `summary.input_total: ${input_total} inconsistent with Section 2 today_ltrs sum=${wsSum} — needs manual verification`,
         ];
       }
+    }
+  }
+
+  // ── Section 2 (water_sources) row-level range check ─────────────────────────
+  // Same "documented in the prompt, never enforced in code" gap, one tier down.
+  // Flag-only — no independent reading of an individual source row exists to
+  // auto-correct from.
+  for (const row of result.water_sources ?? []) {
+    if (row.total != null && row.total > 0 &&
+        (row.total < SOURCE_TOTAL_MIN || row.total > SOURCE_TOTAL_MAX)) {
+      console.warn(`[sanity] water_sources["${row.location}"].total=${row.total} outside expected range [${SOURCE_TOTAL_MIN}, ${SOURCE_TOTAL_MAX}]`);
+      violated = true;
+      result.flagged_fields = [
+        ...(result.flagged_fields ?? []),
+        `water_sources["${row.location}"].total: ${row.total} outside expected range [${SOURCE_TOTAL_MIN}, ${SOURCE_TOTAL_MAX}] — needs manual verification`,
+      ];
     }
   }
 
