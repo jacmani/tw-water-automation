@@ -36,8 +36,14 @@ const LOC_LABELS: Record<string, string> = {
   meter_1: 'Meter 1', meter_2: 'Meter 2', meter_3: 'Meter 3',
 };
 
-const WATER_LEVEL_SLOTS = ['06:00', '12:00', '18:00', '00:00'] as const;
-const SLOT_LABELS: Record<string, string> = { '06:00': '6 AM', '12:00': '12 PM', '18:00': '6 PM', '00:00': '12 AM' };
+// Must match water_level_readings.time_slot CHECK constraint — migration
+// 006_fix_check_constraints.sql changed it from '06:00'-style to '6AM'-style to match
+// the physical sheet's own labels. This form still submitted the old '06:00' style,
+// so every manual Tank Levels save was silently violating the DB constraint and never
+// actually persisting (masked until the H2 fix made /api/logbook report child-table
+// errors instead of swallowing them).
+const WATER_LEVEL_SLOTS = ['6AM', '12PM', '6PM', '12AM'] as const;
+const SLOT_LABELS: Record<string, string> = { '6AM': '6 AM', '12PM': '12 PM', '6PM': '6 PM', '12AM': '12 AM' };
 
 const SECTIONS = [
   'Header',
