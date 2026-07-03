@@ -316,6 +316,19 @@ const DR_CEILING = 80_000;  // DR range max is 40,000 L
 const DO_EXPECTED_MAX = 250_000;
 const DR_EXPECTED_MAX = 40_000;
 
+// Summary section (Section 6: TOTAL INFLOW) sanity ranges — same numbers already
+// given to the model in the extraction prompt above, now ALSO enforced in code.
+// Incident (2026-07-02 sheet): Gemini read input_total=43,300 — a 10x/digit-drop
+// misread (water_sources today_ltrs summed to ~433,000, and the sheet's own printed
+// Diff only reconciles against ~433,000). It reached the DB at confidence 1.0
+// because nothing checked the summary section at all: Qwen doesn't reliably read it,
+// the free tie-breaker only re-reads tower totals, and checkSanity() only validated
+// tower_section. This is the gap that let it through.
+const INPUT_TOTAL_MIN = 150_000;
+const INPUT_TOTAL_MAX = 900_000;
+const TOWER_USAGE_MIN = 300_000;
+const TOWER_USAGE_MAX = 800_000;
+
 interface SanityReport {
   violated: boolean;
   /** Fields that can be auto-corrected: tower → corrected total_ltrs.
@@ -497,6 +510,72 @@ function checkSanity(
         // plausibility floor/ceiling is enforced; null it if nothing is plausible.
         const c = deriveCorrection(t.DO!, DO_CEILING, DO_FLOOR, independentDO, DO_EXPECTED_MAX);
         corrections.push({ tower, type: 'DO', correctedTotal: c.value, source: c.source });
+      }
+    }
+  }
+
+  // ── Summary section (Section 6: TOTAL INFLOW) ──────────────────────────────
+  // No tower-style auto-correction here: unlike tower rows, there is no reliable
+  // independent same-pass column (vol_today) or guaranteed second engine reading
+  // for these fields, so we only flag + lower confidence and force manual review —
+  // never fabricate a "corrected" input_total/tower_usage.
+  const summary = result.summary;
+  if (summary) {
+    if (summary.input_total != null &&
+        (summary.input_total < INPUT_TOTAL_MIN || summary.input_total > INPUT_TOTAL_MAX)) {
+      console.warn(`[sanity] summary.input_total=${summary.input_total} outside expected range [${INPUT_TOTAL_MIN}, ${INPUT_TOTAL_MAX}]`);
+      violated = true;
+      result.flagged_fields = [
+        ...(result.flagged_fields ?? []),
+        `summary.input_total: ${summary.input_total} outside expected range [${INPUT_TOTAL_MIN}, ${INPUT_TOTAL_MAX}] — likely digit-drop/misread, needs manual verification`,
+      ];
+    }
+
+    if (summary.tower_usage != null &&
+        (summary.tower_usage < TOWER_USAGE_MIN || summary.tower_usage > TOWER_USAGE_MAX)) {
+      console.warn(`[sanity] summary.tower_usage=${summary.tower_usage} outside expected range [${TOWER_USAGE_MIN}, ${TOWER_USAGE_MAX}]`);
+      violated = true;
+      result.flagged_fields = [
+        ...(result.flagged_fields ?? []),
+        `summary.tower_usage: ${summary.tower_usage} outside expected range [${TOWER_USAGE_MIN}, ${TOWER_USAGE_MAX}] — likely digit-drop/misread, needs manual verification`,
+      ];
+    }
+
+    // Same-row identity check: TOTAL COLLECTION should ≈ WATER + WELL + TANKER
+    // (all four cells sit on the same printed row — an internal consistency check
+    // that doesn't depend on any other section or engine).
+    const { water_inflow, well_inflow, tanker_inflow, input_total } = summary;
+    if (water_inflow != null && well_inflow != null && tanker_inflow != null && input_total != null) {
+      const computedInput = water_inflow + well_inflow + tanker_inflow;
+      if (computedInput > 0) {
+        const ratio = Math.min(computedInput, input_total) / Math.max(computedInput, input_total);
+        if (ratio < 0.85) {
+          console.warn(`[sanity] summary.input_total=${input_total} vs water+well+tanker=${computedInput} ratio=${ratio.toFixed(2)}`);
+          violated = true;
+          result.flagged_fields = [
+            ...(result.flagged_fields ?? []),
+            `summary.input_total: ${input_total} disagrees with WATER+WELL+TANKER=${computedInput} on the same row — needs manual verification`,
+          ];
+        }
+      }
+    }
+
+    // Cross-section check: TOTAL COLLECTION should roughly track the sum of
+    // Section 2's individual source rows for the day (today_ltrs). This is a
+    // softer signal (Section 6 subtotals aren't defined as a pure sum of Section 2
+    // rows) so it only flags — it does not by itself force violated=true unless
+    // combined with the absolute-range check above being silent (input_total
+    // in-range but still wildly inconsistent with Section 2).
+    const wsSum = (result.water_sources ?? []).reduce((s, r) => s + (r.today_ltrs ?? 0), 0);
+    if (wsSum > 50_000 && input_total != null) {
+      const ratio = Math.min(wsSum, input_total) / Math.max(wsSum, input_total);
+      if (ratio < 0.5) {
+        console.warn(`[sanity] summary.input_total=${input_total} vs water_sources today_ltrs sum=${wsSum} ratio=${ratio.toFixed(2)}`);
+        violated = true;
+        result.flagged_fields = [
+          ...(result.flagged_fields ?? []),
+          `summary.input_total: ${input_total} inconsistent with Section 2 today_ltrs sum=${wsSum} — needs manual verification`,
+        ];
       }
     }
   }
@@ -953,6 +1032,22 @@ async function extractSheetDataInner(
       `escalation_engine:haiku`,
       `escalation_reason:${reasons.join('|')}`,
       'warning:haiku_also_failed_sanity_auto_corrected_from_vol_today',
+    ];
+  } else if (haikuSanity.violated) {
+    // Violated but nothing in `corrections` — this is the summary-section case
+    // (no auto-correction path exists for input_total/tower_usage). Haiku's own
+    // re-read STILL falls outside the documented range, so both engines agree on
+    // a number that looks wrong. Surface it rather than shipping it at full
+    // confidence — the summary.input_total/tower_usage mismatch on the 2026-07-02
+    // sheet is exactly what this branch would have caught.
+    console.warn('[extraction] Haiku escalation ALSO fails sanity with no auto-correction available (likely summary section) → flagging for manual review');
+    haikuResult.overall_confidence = Math.min(haikuResult.overall_confidence, 0.55);
+    progress?.('warn', `Claude Haiku ✓ (${haikuMs}ms) — still fails sanity, needs manual review`, 'no independent reading available to auto-correct');
+    haikuResult.flagged_fields = [
+      ...(haikuResult.flagged_fields ?? []),
+      `escalation_engine:haiku`,
+      `escalation_reason:${reasons.join('|')}`,
+      'warning:haiku_also_failed_sanity_no_correction_available_manual_review_required',
     ];
   } else {
     progress?.('success', `Claude Haiku ✓ (${haikuMs}ms)`, `confidence ${(haikuResult.overall_confidence*100).toFixed(0)}%`);
