@@ -18,18 +18,21 @@ export default function SummaryRow({ inputTotal, towerUsage, diff, sheetDate }: 
       <p className="section-label mb-3">
         Community water balance — {formatMediumDate(sheetDate)}
       </p>
-      <div className="grid grid-cols-3 gap-3 text-center">
-        <div>
+      <div className="grid grid-cols-3 gap-1.5 xs:gap-3 text-center">
+        <div className="min-w-0">
           <p className="text-slate-500 dark:text-slate-400 text-xs mb-1">Input</p>
-          <p className="text-slate-900 dark:text-white font-bold text-2xl leading-tight">{formatLitresFull(inputTotal)}</p>
+          {/* text-2xl was fixed-size and overflowed narrow mobile columns (3-up grid
+              leaves ~100px per column) — now scales down on small screens and back
+              up from the xs breakpoint. */}
+          <p className="text-slate-900 dark:text-white font-bold text-base xs:text-xl sm:text-2xl leading-tight tracking-tight break-words">{formatLitresFull(inputTotal)}</p>
         </div>
-        <div>
+        <div className="min-w-0">
           <p className="text-slate-500 dark:text-slate-400 text-xs mb-1">Tower Usage</p>
-          <p className="text-slate-900 dark:text-white font-bold text-2xl leading-tight">{formatLitresFull(towerUsage)}</p>
+          <p className="text-slate-900 dark:text-white font-bold text-base xs:text-xl sm:text-2xl leading-tight tracking-tight break-words">{formatLitresFull(towerUsage)}</p>
         </div>
-        <div>
+        <div className="min-w-0">
           <p className="text-slate-500 dark:text-slate-400 text-xs mb-1">Diff</p>
-          <p className={`font-bold text-2xl leading-tight ${diffIsLarge ? 'text-red-500 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+          <p className={`font-bold text-base xs:text-xl sm:text-2xl leading-tight tracking-tight break-words ${diffIsLarge ? 'text-red-500 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
             {diff == null ? '—' : `${diff > 0 ? '+' : ''}${formatLitresFull(diff)}`}
           </p>
           {diffIsLarge && (
