@@ -47,11 +47,16 @@ If the values genuinely match after careful re-reading, set confidence < 0.8 and
 add both field names to flagged_fields.
 
 === SECTION 3: WATER LEVEL SECTION ===
-Physical tank levels taken 4 times daily. The sheet shows PERCENTAGE (%) only.
+Physical tank levels taken 4 times daily. Each cell shows TWO numbers written as "CM/Percentage"
+(e.g. "80/26" means the tank has 80cm of water and is 26% full; "230/70" means 230cm and 70% full).
+The FIRST number (before the slash, always the LARGER one) is the CM depth reading → cm_reading.
+The SECOND number (after the slash, always the SMALLER one, 0-100) is the fill percentage → percentage.
+Do NOT reverse these — percentage can never exceed 100. If you read a cell as two numbers and the
+"percentage" value would be over 100, you have them backwards: swap so the larger number is cm_reading
+and the smaller (≤100) number is percentage.
 Tanks (5 columns): JDO (Jupiter DO), JDR (Jupiter DR), CT (Collection Tank), MDO (Mercury DO), MDR (Mercury DR)
 Time slots (4 rows): 6AM (06.00 AM), 12PM (12.00 PM), 6PM (06.00 PM), 12AM (12.00 AM)
-If a CM reading is written alongside the percentage, capture it in cm_reading; otherwise leave cm_reading null.
-Blank cell = not taken yet → output null.
+Blank cell = not taken yet → output null for both cm_reading and percentage.
 
 === SECTION 4: AMENITIES SECTION ===
 CAR WASH (4 columns): Jupiter, Mercury, Venus, Neptune
