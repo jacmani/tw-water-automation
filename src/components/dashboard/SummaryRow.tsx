@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { formatLitresFull } from '@/lib/utils';
 import { formatMediumDate } from '@/lib/utils';
 
@@ -8,8 +9,24 @@ interface Props {
   sheetDate: string;
 }
 
+// ±10 kL — same TOLERANCE used by the history page's summary_misread flag
+// (src/components/history/flagging.ts). Kept in sync deliberately.
+const TOLERANCE = 10_000;
+
 export default function SummaryRow({ inputTotal, towerUsage, diff, sheetDate }: Props) {
-  const diffIsLarge = diff != null && Math.abs(diff) > 2000;
+  // audit P0-2: never trust the extracted `diff` verbatim — it's an OCR field
+  // like any other and can misread. Cross-check it against the two numbers
+  // displayed right next to it and recompute if they disagree.
+  const computedDiff = inputTotal != null && towerUsage != null ? inputTotal - towerUsage : null;
+  const mismatch =
+    diff != null && computedDiff != null && Math.abs(diff - computedDiff) > TOLERANCE;
+
+  const displayedDiff = mismatch ? computedDiff : diff;
+  // Never render a green positive balance when Out > In, regardless of which
+  // value (extracted or computed) is being shown.
+  const isDeficit = displayedDiff != null && displayedDiff < 0;
+  const diffIsLarge = displayedDiff != null && Math.abs(displayedDiff) > 2000;
+  const diffIsBad = isDeficit || diffIsLarge;
 
   // Hero band (audit M3) — these are the master governance numbers for the whole
   // complex, previously rendered at the same text-sm weight as secondary details.
@@ -32,11 +49,19 @@ export default function SummaryRow({ inputTotal, towerUsage, diff, sheetDate }: 
         </div>
         <div className="min-w-0">
           <p className="text-slate-500 dark:text-slate-400 text-xs mb-1">Diff</p>
-          <p className={`font-bold text-base xs:text-xl sm:text-2xl leading-tight tracking-tight break-words ${diffIsLarge ? 'text-red-500 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-            {diff == null ? '—' : `${diff > 0 ? '+' : ''}${formatLitresFull(diff)}`}
+          <p className={`font-bold text-base xs:text-xl sm:text-2xl leading-tight tracking-tight break-words ${diffIsBad ? 'text-red-500 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+            {displayedDiff == null ? '—' : `${displayedDiff > 0 ? '+' : ''}${formatLitresFull(displayedDiff)}`}
           </p>
-          {diffIsLarge && (
+          {diffIsLarge && !mismatch && (
             <p className="text-red-500 dark:text-red-400 text-[11px] font-semibold mt-0.5">⚠ above tolerance</p>
+          )}
+          {mismatch && (
+            <Link
+              href="/history"
+              className="block text-red-500 dark:text-red-400 text-[11px] font-semibold mt-0.5 underline decoration-dotted"
+            >
+              ⚠ doesn&apos;t match sheet — sheet says {diff! > 0 ? '+' : ''}{formatLitresFull(diff)}
+            </Link>
           )}
         </div>
       </div>
