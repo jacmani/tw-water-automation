@@ -1080,7 +1080,7 @@ export default function UploadPage() {
             <button
               onClick={sharePoster}
               disabled={shareState === 'generating' || !posterData}
-              className="w-full flex items-center justify-center gap-2 bg-[#25D366] hover:bg-[#1db954] disabled:bg-slate-700 disabled:cursor-not-allowed text-white font-bold py-4 rounded-xl text-base transition-colors"
+              className="w-full flex items-center justify-center gap-2 bg-[#25D366] hover:bg-[#1db954] disabled:bg-slate-700 disabled:cursor-not-allowed text-[#0B3D1F] disabled:text-white font-bold py-4 rounded-xl text-base transition-colors"
             >
               {shareState === 'generating' || (!posterData && shareState !== 'error') ? (
                 <>
