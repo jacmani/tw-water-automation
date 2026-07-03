@@ -46,6 +46,7 @@ const FLAGGED_SHEET_IDS = [
   'c82c0e97-ad35-466d-a585-112b23426b30', // 2026-05-27 — TC vs summary 60 kL gap
   '1e7687ef-1253-4ea6-93ad-f1596fa81f0f', // 2026-06-05 — source dup + low confidence
   '20bf8e19-edef-4e75-8a76-1fec58748dd0', // 2026-06-09 — summary section row misread
+  '4612b8fb-cab3-4bb1-b2e7-558d83b8504c', // 2026-07-02 — summary.input_total=43,300 (~10x/digit-drop; WS today_ltrs sum ≈433,000), caught by new checkSanity summary-range check
 ];
 
 // ─────────────────────────────────────────
