@@ -29,8 +29,10 @@ const LOC_LABELS: Record<string, string> = {
   'Meter 1': 'Meter 1', 'Meter 2': 'Meter 2', 'Meter 3': 'Meter 3',
 };
 
+// Must match water_level_readings.time_slot CHECK constraint (migration 006 —
+// '6AM'/'12PM'/'6PM'/'12AM', not '06:00'-style).
 const SLOT_LABELS: Record<string, string> = {
-  '06:00': '6 AM', '12:00': '12 PM', '18:00': '6 PM', '00:00': '12 AM',
+  '6AM': '6 AM', '12PM': '12 PM', '6PM': '6 PM', '12AM': '12 AM',
 };
 
 function Val({ v }: { v: number | null | undefined }) {
@@ -140,7 +142,7 @@ function AmenityTable({ rows, type, locs }: { rows: AmenityMeterReading[]; type:
 }
 
 function LevelTable({ rows }: { rows: WaterLevelReading[] }) {
-  const slots = ['06:00', '12:00', '18:00', '00:00'];
+  const slots = ['6AM', '12PM', '6PM', '12AM'];
   return (
     <table className="w-full text-sm text-slate-300">
       <TableHead cols={['Time', 'Jup DO%', 'Jup DR%', 'CT%', 'Mer DO%', 'Mer DR%', 'Cum J', 'Cum M', 'Cum V', 'Cum N', 'Cum Tot']} />
