@@ -19,7 +19,19 @@ export default function InflowSummaryPanel({ data, date }: Props) {
     );
   }
 
-  const isNegativeBalance = data.balance != null && data.balance < 0;
+  // audit P0-2 (same class as SummaryRow): don't trust the extracted `balance`
+  // verbatim — cross-check against the two totals shown right next to it.
+  const TOLERANCE = 10_000; // kept in sync with src/components/history/flagging.ts
+  const computedBalance =
+    data.total_collection != null && data.total_usage != null
+      ? data.total_collection - data.total_usage
+      : null;
+  const mismatch =
+    data.balance != null &&
+    computedBalance != null &&
+    Math.abs(data.balance - computedBalance) > TOLERANCE;
+  const displayedBalance = mismatch ? computedBalance : data.balance;
+  const isNegativeBalance = displayedBalance != null && displayedBalance < 0;
 
   const items = [
     { label: 'Water Inflow', value: data.water_inflow, color: 'text-blue-600 dark:text-blue-400' },
@@ -54,16 +66,21 @@ export default function InflowSummaryPanel({ data, date }: Props) {
         <div className="text-center">
           <p className="text-slate-400 dark:text-slate-500 text-xs mb-0.5">Balance</p>
           <p className={`font-semibold text-sm ${isNegativeBalance ? 'text-red-500 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-            {data.balance == null
+            {displayedBalance == null
               ? '—'
-              : `${data.balance > 0 ? '+' : ''}${formatLitresFull(data.balance)}`}
+              : `${displayedBalance > 0 ? '+' : ''}${formatLitresFull(displayedBalance)}`}
             {isNegativeBalance && ' ⚠'}
           </p>
         </div>
       </div>
 
-      {isNegativeBalance && (
+      {isNegativeBalance && !mismatch && (
         <p className="mt-2 text-red-500 dark:text-red-400/80 text-xs">Negative balance may indicate a leak or measurement error.</p>
+      )}
+      {mismatch && (
+        <p className="mt-2 text-red-500 dark:text-red-400/80 text-xs">
+          ⚠ doesn&apos;t match sheet — sheet says {data.balance! > 0 ? '+' : ''}{formatLitresFull(data.balance)}
+        </p>
       )}
     </div>
   );
