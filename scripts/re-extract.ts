@@ -1,30 +1,83 @@
 /**
- * Re-runs extraction on flagged sheets using the current production prompt.
- * Shows old vs new field comparison and applies changes on --commit.
+ * Re-runs extraction on flagged sheets using the REAL production pipeline
+ * (extractSheetData from src/lib/anthropic.ts — same function the upload route
+ * calls), not a bespoke standalone prompt. Shows old vs new field comparison
+ * and applies changes on --commit.
  *
- * Usage:
+ * IMPORTANT — history: this script used to carry its own copy of the extraction
+ * prompt and call Haiku directly, bypassing every safety net in anthropic.ts
+ * (checkSanity, enforceHardCeilings, the escalation path). Running it against
+ * the 2026-07-02 sheet surfaced raw Haiku reads with an impossible water_sources
+ * total (1,159,000 — 3x the documented 400k ceiling) and a Mercury/Neptune/Jupiter
+ * DO↔DR row-shift, values a --commit run would have written straight to the DB
+ * with zero correction. Now it calls the same extractSheetData() the live
+ * /api/upload route uses, so a re-extraction gets the same hard ceilings,
+ * summary/source range checks, and paid-escalation retry as a fresh upload —
+ * "fail-safe null + flag", never a confident-looking wrong number.
+ *
+ * Usage (normal — on a machine with no per-process time limit):
  *   npx ts-node --project tsconfig.json scripts/re-extract.ts
  *   npx ts-node --project tsconfig.json scripts/re-extract.ts --commit
  *   npx ts-node --project tsconfig.json scripts/re-extract.ts --query-flagged
  *   npx ts-node --project tsconfig.json scripts/re-extract.ts --query-flagged --commit
  *
+ * Usage (time-boxed environments — CI runners / sandboxes with a hard wall-clock
+ * cap per command, e.g. ~45s): a sheet that needs escalation chains TWO ~20s
+ * Claude calls (primary then escalation) sequentially, which can exceed a tight
+ * cap even though each individual call fits comfortably. --phase1/--phase2 split
+ * that chain across two separate command invocations, caching intermediate state
+ * to disk. Each phase still processes ALL target sheets CONCURRENTLY (one Claude
+ * call in flight per sheet), so wall-clock time is bounded by the slowest single
+ * call (~20-25s), not the sheet count:
+ *
+ *   npx ts-node --project tsconfig.json scripts/re-extract.ts --phase1
+ *   npx ts-node --project tsconfig.json scripts/re-extract.ts --phase2           (repeat if it reports more sheets still need phase2 — e.g. Haiku's own escalation read also failed sanity in a way that needs a 3rd look; normally one pass is enough)
+ *   npx ts-node --project tsconfig.json scripts/re-extract.ts --phase2 --commit  (once phase2 reports all sheets resolved, this prints the diff and writes to DB)
+ *
+ * The cache lives at scripts/.re-extract-cache.json (gitignored) and is scoped
+ * to whatever sheet set you passed (FLAGGED_SHEET_IDS / --query-flagged / SHEET_ID).
+ * Delete it to start a phased run over.
+ *
  * Options:
  *   --commit         Write changes to DB (default: dry run)
  *   --query-flagged  Re-extract all non-superseded sheets with confidence < 0.75
  *                    instead of using the FLAGGED_SHEET_IDS list
+ *   --phase1         Run only the free/primary extraction + sanity check, cache
+ *                     to disk, and exit. Use in time-boxed environments.
+ *   --phase2         Run escalation (paid Haiku) for any cached sheet that needs
+ *                     it, update the cache, then (if every sheet now has a final
+ *                     result) fall through to the normal diff/commit step.
  *
  * Requires in .env.local:
  *   NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, ANTHROPIC_API_KEY
  *   MISTRAL_API_KEY (optional — enables OCR transcript injection for better accuracy)
+ *   GEMINI_API_KEY (optional — if unset, extractSheetData falls back to Haiku
+ *     as primary automatically, same as production)
+ *
+ * Note: no QwenVisionResult/OpenRouter reading is available for a historical
+ * re-extraction (those only run at upload time), so the free agreement gate has
+ * nothing to compare against and every sheet effectively runs Haiku-primary →
+ * checkSanity → (if violated) a second Haiku escalation call. That's 1-2 paid
+ * calls per sheet, same cost class as a normal upload's worst case.
  */
 
+import * as fs from 'fs';
 import * as path from 'path';
 import * as dotenv from 'dotenv';
 
 dotenv.config({ path: path.resolve(__dirname, '../.env.local') });
 
-import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
+import type { ExtractionResult } from '../src/types';
+import {
+  extractSheetData,
+  runPrimaryExtraction,
+  runExtraction,
+  checkSanity,
+  applyCorrections,
+  enforceHardCeilings,
+} from '../src/lib/anthropic';
+import { extractTextWithMistralOcr } from '../src/lib/mistralOcr';
 
 // ─────────────────────────────────────────
 // Config
@@ -32,7 +85,15 @@ import { createClient } from '@supabase/supabase-js';
 
 const COMMIT = process.argv.includes('--commit');
 const QUERY_FLAGGED = process.argv.includes('--query-flagged');
+const PHASE1 = process.argv.includes('--phase1');
+const PHASE2 = process.argv.includes('--phase2');
 const LOW_CONFIDENCE_THRESHOLD = 0.75;
+// Must match CONFIDENCE_THRESHOLD in src/lib/anthropic.ts (not exported — it's
+// an internal gate constant). Only used here to replicate the same "does the
+// primary result need escalation" decision when phase-splitting.
+const EXTRACTION_CONFIDENCE_THRESHOLD = 0.80;
+const HAIKU_MODEL = process.env.EXTRACTION_MODEL ?? 'claude-haiku-4-5-20251001';
+const CACHE_PATH = path.resolve(__dirname, '.re-extract-cache.json');
 
 // Specific sheets to re-extract (used when --query-flagged is NOT passed).
 // Update this list when you identify new sheets needing re-extraction.
@@ -46,214 +107,268 @@ const FLAGGED_SHEET_IDS = [
   'c82c0e97-ad35-466d-a585-112b23426b30', // 2026-05-27 — TC vs summary 60 kL gap
   '1e7687ef-1253-4ea6-93ad-f1596fa81f0f', // 2026-06-05 — source dup + low confidence
   '20bf8e19-edef-4e75-8a76-1fec58748dd0', // 2026-06-09 — summary section row misread
-  '4612b8fb-cab3-4bb1-b2e7-558d83b8504c', // 2026-07-02 — summary.input_total=43,300 (~10x/digit-drop; WS today_ltrs sum ≈433,000), caught by new checkSanity summary-range check
+  // 2026-07-02 deliberately NOT included — already hand-corrected + user-verified
+  // against the physical sheet (see CLAUDE.md / commit history). Re-extracting it
+  // with this now-hardened script would be a good confirmation exercise later,
+  // but should not overwrite the verified values without review.
 ];
 
 // ─────────────────────────────────────────
-// Current production extraction prompt
-// (kept in sync with src/lib/anthropic.ts — update both when the prompt changes)
+// Phase cache
 // ─────────────────────────────────────────
 
-const EXTRACTION_PROMPT = `You are analyzing a handwritten daily water meter reading sheet for Trinity World residential apartment complex in India.
-
-Extract ALL data from this sheet and return it as a valid JSON object. Read carefully — the handwriting varies by technician.
-
-THE SHEET HAS THESE SECTIONS:
-
-=== SECTION 1: TOWER SECTION (top of sheet) ===
-Primary accountability table. Four towers: Venus, Mercury, Neptune, Jupiter.
-Each tower has TWO rows: DO (Domestic/Overhead water) and DR (Drinking water).
-Columns left to right:
-  R Y Day — Meter reading yesterday
-  R T Day — Meter reading today
-  Total Litres — Calculated consumption
-  Volume Yesterday (Ltrs) — Yesterday volume
-  Volume Today (Ltrs) — Today volume
-  Diff — Difference
-
-=== SECTION 2: SOURCE/LOCATION SECTION ===
-Rows (read in this order):
-  M+V DO with MTR, J+N DO with JTR, V Well 1+2+3, V Well 4+B1+B2, N Well 5, N Well 6, ON Outside Well, Kingsley
-Columns: R Y Day, R Today, Yesterday in Ltrs, Today in Ltrs, Total
-
-CRITICAL — ADJACENT ROW DUPLICATION: Each source row MUST be read independently.
-Do NOT copy or assume a value from one row to the next. If two adjacent rows appear
-to have identical values, re-examine the original handwriting — this almost certainly
-means you misread one of them. This applies especially to:
-  • "M+V DO with MTR" vs "J+N DO with JTR" (these are different water sources)
-  • "V Well 1+2+3" vs "V Well 4+B1+B2" (these are different well groups)
-If the values genuinely match after careful re-reading, set confidence < 0.8 and
-add both field names to flagged_fields.
-
-=== SECTION 3: WATER LEVEL SECTION ===
-Physical tank levels taken 4 times daily.
-Tanks: JDO, JDR, CT, MDO, MDR, Fire Tank
-Time slots: 6AM, 12PM, 6PM, 12AM
-Format: CM/Percentage — e.g. "80/26" means 80cm, 26%. Blank = not taken yet.
-
-=== SECTION 4: AMENITIES SECTION ===
-Car Wash: Jupiter, Mercury, Venus, Neptune
-Swimming Pool: Meter 3, Meter 4, Meter 5
-Columns: Y Day, R Day, Diff
-
-=== SECTION 5: PARTY HALL SECTION ===
-Meters: Meter 6, Meter 7, WTP1, WTP2, VUF, JUF, Venus STP
-Columns: Y Day, T Day, Diff
-
-=== SECTION 6: TOTAL INFLOW (bottom table of sheet) ===
-The bottom of the sheet is a table titled "TOTAL INFLOW" with these COLUMN headers,
-left to right:
-  WATER | WELL | TANKER | TOTAL COLLECTION | TOTAL USAGE | BALANCE
-There is a main data row and a "CUMULATIVE" row below it. Read the MAIN row (not the
-cumulative row). Anchor each value to its COLUMN header — never read positionally.
-
-  "WATER"             → water_inflow      (treated/municipal water inflow)
-  "WELL"              → well_inflow       (total from all wells)
-  "TANKER"            → tanker_inflow     (total tanker water received)
-  "TOTAL COLLECTION"  → input_total       (WATER + WELL + TANKER — the grand total inflow)
-  "TOTAL USAGE"       → tower_usage       (total consumed by towers)
-  "BALANCE"           → diff              (TOTAL COLLECTION − TOTAL USAGE; may be +/−)
-
-CRITICAL anchoring rules:
-- "TOTAL COLLECTION" is a TOTAL — it is the LARGEST of WATER/WELL/TANKER/COLLECTION and
-  should ≈ WATER + WELL + TANKER. Never put the collection total into WATER/WELL/TANKER.
-- If a cell is blank, output null — do NOT copy a neighbouring column's value into it.
-- These columns are NOT the same as the wells/tankers in Section 2. Section 2 lists
-  individual meter readings; Section 6 lists the day's rolled-up inflow totals.
-
-=== INDIAN NUMBER FORMAT ===
-Numbers on this sheet are written in Indian/South Asian format with commas:
-  1,76,000 = 176,000 (one lakh seventy-six thousand)
-  1,98,000 = 198,000 (one lakh ninety-eight thousand)
-  2,54,000 = 254,000 etc.
-Always output numbers as plain integers without commas: 176000, 198000, 254000.
-
-CRITICAL HANDWRITING DISAMBIGUATION — these digit pairs are frequently confused:
-  • 1 vs 7: A handwritten "7" with a short top stroke looks like "1". If a DO total
-    reads ~116,000 but the row's r_today and r_yesterday suggest higher consumption,
-    re-examine whether the second digit is "7" not "1" → i.e. 176,000.
-  • 1 vs 7 in Indian format: "1,16,000" may actually be "1,76,000" = 176,000.
-  • 6 vs 0: handwritten "0" with a tail looks like "6".
-  • 3 vs 8: an open-top "8" can look like "3".
-When in doubt between two readings, prefer the one that falls within the expected
-sanity range AND is consistent with meter reading delta (r_today − r_yesterday).
-
-=== SANITY RANGES ===
-After extracting each value, verify it falls within the expected range for that field.
-If a value is outside the range, set confidence for that field to 0.6 and add
-"fieldname: out_of_range (value)" to flagged_fields. Never set the value to null
-or 0 just because it is out of range — report what you actually read.
-
-Additionally: for Tower DO rows, verify that total_ltrs ≈ (r_today − r_yesterday)
-or ≈ vol_today. If total_ltrs is more than 50% different from what the meter delta
-implies, re-read the total_ltrs cell — it is likely a digit misread.
-
-Expected ranges:
-  Tower section total_ltrs (DO rows): 50,000 – 250,000 L
-  Tower section total_ltrs (DR rows): 5,000 – 40,000 L
-  Water source Total column: 20,000 – 400,000 L
-  summary.water_inflow: 0 – 600,000 L
-  summary.well_inflow: 0 – 500,000 L
-  summary.tanker_inflow: 0 – 500,000 L
-  summary.input_total (TOTAL COLLECTION): 150,000 – 900,000 L
-  summary.tower_usage (TOTAL USAGE): 300,000 – 800,000 L
-
-Return ONLY a valid JSON object — no markdown, no explanation. Use null for blank/unreadable cells.
-
-{
-  "date": "YYYY-MM-DD or null",
-  "date_confidence": 0.0,
-  "overall_confidence": 0.0,
-  "tower_section": {
-    "Venus": {
-      "DO": {"r_yesterday":null,"r_today":null,"total_ltrs":null,"vol_yesterday":null,"vol_today":null,"diff":null,"confidence":0.0},
-      "DR": {"r_yesterday":null,"r_today":null,"total_ltrs":null,"vol_yesterday":null,"vol_today":null,"diff":null,"confidence":0.0}
-    },
-    "Mercury": {
-      "DO": {"r_yesterday":null,"r_today":null,"total_ltrs":null,"vol_yesterday":null,"vol_today":null,"diff":null,"confidence":0.0},
-      "DR": {"r_yesterday":null,"r_today":null,"total_ltrs":null,"vol_yesterday":null,"vol_today":null,"diff":null,"confidence":0.0}
-    },
-    "Neptune": {
-      "DO": {"r_yesterday":null,"r_today":null,"total_ltrs":null,"vol_yesterday":null,"vol_today":null,"diff":null,"confidence":0.0},
-      "DR": {"r_yesterday":null,"r_today":null,"total_ltrs":null,"vol_yesterday":null,"vol_today":null,"diff":null,"confidence":0.0}
-    },
-    "Jupiter": {
-      "DO": {"r_yesterday":null,"r_today":null,"total_ltrs":null,"vol_yesterday":null,"vol_today":null,"diff":null,"confidence":0.0},
-      "DR": {"r_yesterday":null,"r_today":null,"total_ltrs":null,"vol_yesterday":null,"vol_today":null,"diff":null,"confidence":0.0}
-    }
-  },
-  "water_sources": [
-    {"location":"M+V DO with MTR","r_yesterday":null,"r_today":null,"yesterday_ltrs":null,"today_ltrs":null,"total":null,"confidence":0.0},
-    {"location":"J+N DO with JTR","r_yesterday":null,"r_today":null,"yesterday_ltrs":null,"today_ltrs":null,"total":null,"confidence":0.0},
-    {"location":"V Well 1+2+3","r_yesterday":null,"r_today":null,"yesterday_ltrs":null,"today_ltrs":null,"total":null,"confidence":0.0},
-    {"location":"V Well 4+B1+B2","r_yesterday":null,"r_today":null,"yesterday_ltrs":null,"today_ltrs":null,"total":null,"confidence":0.0},
-    {"location":"N Well 5","r_yesterday":null,"r_today":null,"yesterday_ltrs":null,"today_ltrs":null,"total":null,"confidence":0.0},
-    {"location":"N Well 6","r_yesterday":null,"r_today":null,"yesterday_ltrs":null,"today_ltrs":null,"total":null,"confidence":0.0},
-    {"location":"ON Outside Well","r_yesterday":null,"r_today":null,"yesterday_ltrs":null,"today_ltrs":null,"total":null,"confidence":0.0},
-    {"location":"Kingsley","r_yesterday":null,"r_today":null,"yesterday_ltrs":null,"today_ltrs":null,"total":null,"confidence":0.0}
-  ],
-  "water_levels": [],
-  "amenities": [],
-  "summary": {
-    "water_inflow":null,"well_inflow":null,"tanker_inflow":null,
-    "input_total":null,"tower_usage":null,"diff":null,"confidence":0.0
-  },
-  "flagged_fields": []
-}`;
-
-// ─────────────────────────────────────────
-// Extraction helpers
-// ─────────────────────────────────────────
-
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function runExtraction(base64: string, mediaType: string, ocrTranscript?: string): Promise<any> {
-  const transcriptBlock = ocrTranscript ? {
-    type: 'text' as const,
-    text: `\n\n--- MISTRAL OCR TRANSCRIPT (purpose-built handwriting OCR, high accuracy) ---\nUse this as a reference to resolve any digit ambiguities you see in the image above.\nIf a number in the image is unclear, prefer the value shown in this transcript.\nHowever, the transcript may have table alignment errors — always verify against the image.\n\n${ocrTranscript}\n--- END TRANSCRIPT ---`,
-  } : null;
-
-  const userContent = transcriptBlock
-    ? [
-        { type: 'image' as const, source: { type: 'base64' as const, media_type: mediaType as 'image/jpeg', data: base64 } },
-        transcriptBlock,
-      ]
-    : [{ type: 'image' as const, source: { type: 'base64' as const, media_type: mediaType as 'image/jpeg', data: base64 } }];
-
-  const response = await anthropic.messages.create({
-    model: 'claude-haiku-4-5-20251001', // Haiku — same as production escalation engine
-    max_tokens: 4096,
-    system: EXTRACTION_PROMPT,
-    messages: [{ role: 'user', content: userContent }],
-  });
-  const text = (response.content[0] as { type: string; text: string }).text.trim();
-  const jsonStr = text.startsWith('{') ? text : (text.match(/```(?:json)?\n?([\s\S]*?)\n?```/)?.[1] ?? text);
-  return JSON.parse(jsonStr);
+interface CacheEntry {
+  sheetId: string;
+  date: string;
+  imageUrl: string;
+  oldConfidence: number | null;
+  ocrTranscript: string | undefined;
+  needsEscalation: boolean;
+  finalResult: ExtractionResult | null;
 }
 
-async function runMistralOcr(base64: string, mediaType: string): Promise<string | null> {
-  const apiKey = process.env.MISTRAL_API_KEY;
-  if (!apiKey) return null;
+function loadCache(): Record<string, CacheEntry> {
+  if (!fs.existsSync(CACHE_PATH)) return {};
   try {
-    const res = await fetch('https://api.mistral.ai/v1/ocr', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: 'mistral-ocr-2512',
-        document: { type: 'image_url', image_url: `data:${mediaType};base64,${base64}` },
-        include_image_base64: false,
-      }),
-    });
+    return JSON.parse(fs.readFileSync(CACHE_PATH, 'utf-8'));
+  } catch {
+    return {};
+  }
+}
+
+function saveCache(cache: Record<string, CacheEntry>) {
+  fs.writeFileSync(CACHE_PATH, JSON.stringify(cache, null, 2));
+}
+
+async function fetchImage(imageUrl: string): Promise<{ base64: string; mediaType: 'image/jpeg' | 'image/png' | 'image/webp' } | null> {
+  try {
+    const res = await fetch(imageUrl);
     if (!res.ok) return null;
-    const data = await res.json() as { pages?: Array<{ markdown?: string; index?: number }> };
-    const md = (data.pages ?? [])
-      .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
-      .map(p => p.markdown ?? '')
-      .join('\n\n')
-      .trim();
-    return md || null;
-  } catch { return null; }
+    const buf = Buffer.from(await res.arrayBuffer());
+    const ext = imageUrl.split('.').pop()?.toLowerCase() ?? 'jpg';
+    const mediaType = (ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg') as
+      'image/jpeg' | 'image/png' | 'image/webp';
+    return { base64: buf.toString('base64'), mediaType };
+  } catch {
+    return null;
+  }
+}
+
+/** Phase 1: primary (free/Haiku-fallback) extraction + sanity check, cached to disk. */
+async function runPhase1(sheetIds: string[], supabase: any) {
+  const mistralEnabled = !!process.env.MISTRAL_API_KEY;
+  const cache = loadCache();
+
+  await Promise.all(sheetIds.map(async (sheetId) => {
+    if (cache[sheetId]) return; // already ran phase1 for this sheet
+    const { data: sheet } = await supabase
+      .from('daily_sheets')
+      .select('date, image_url, confidence_score')
+      .eq('id', sheetId)
+      .single();
+    if (!sheet?.image_url) {
+      console.log(`[${sheetId}] SKIP — no image_url`);
+      return;
+    }
+    const img = await fetchImage(sheet.image_url);
+    if (!img) {
+      console.log(`[${sheetId}] SKIP — image download failed`);
+      return;
+    }
+    let ocrTranscript: string | undefined;
+    if (mistralEnabled) {
+      const mistralResult = await extractTextWithMistralOcr(img.base64, img.mediaType);
+      ocrTranscript = mistralResult.success ? mistralResult.markdown : undefined;
+    }
+    console.log(`[${sheetId}] running primary extraction…`);
+    const { result: primaryResult } = await runPrimaryExtraction(img.base64, img.mediaType, ocrTranscript);
+    const sanity = checkSanity(primaryResult);
+    const lowConfidence = primaryResult.overall_confidence < EXTRACTION_CONFIDENCE_THRESHOLD;
+    const needsEscalation = sanity.violated || lowConfidence;
+    console.log(`[${sheetId}] primary confidence=${primaryResult.overall_confidence} sanityViolated=${sanity.violated} lowConfidence=${lowConfidence} → ${needsEscalation ? 'needs escalation' : 'gate clean'}`);
+
+    cache[sheetId] = {
+      sheetId,
+      date: sheet.date,
+      imageUrl: sheet.image_url,
+      oldConfidence: sheet.confidence_score,
+      ocrTranscript,
+      needsEscalation,
+      finalResult: needsEscalation ? null : enforceHardCeilings(primaryResult),
+    };
+  }));
+
+  saveCache(cache);
+  const pending = sheetIds.filter((id) => cache[id]?.needsEscalation && !cache[id]?.finalResult);
+  const done = sheetIds.filter((id) => cache[id]?.finalResult);
+  console.log(`\nPhase 1 complete. ${done.length}/${sheetIds.length} resolved without escalation. ${pending.length} need --phase2.`);
+}
+
+/** Phase 2: paid Haiku escalation for cached sheets that need it, then update cache. */
+async function runPhase2(sheetIds: string[]) {
+  const cache = loadCache();
+  const missing = sheetIds.filter((id) => !cache[id]);
+  if (missing.length > 0) {
+    console.log(`Missing phase1 cache for: ${missing.join(', ')}. Run --phase1 first.`);
+    return false;
+  }
+
+  const toEscalate = sheetIds.filter((id) => cache[id].needsEscalation && !cache[id].finalResult);
+  if (toEscalate.length === 0) {
+    console.log('Phase 2: nothing to escalate — all sheets already resolved.');
+    return true;
+  }
+
+  // Each sheet's escalation call is isolated in its own try/catch — a single
+  // sheet throwing (e.g. Haiku returning malformed JSON on a bad read) must
+  // not take down Promise.all and lose the other sheets' already-completed
+  // results before saveCache() runs. Failed sheets just stay unresolved and
+  // get retried on the next --phase2 invocation.
+  await Promise.all(toEscalate.map(async (sheetId) => {
+    const entry = cache[sheetId];
+    try {
+      const img = await fetchImage(entry.imageUrl);
+      if (!img) {
+        console.log(`[${sheetId}] SKIP — image re-download failed during phase2`);
+        return;
+      }
+      console.log(`[${sheetId}] escalating to Claude Haiku…`);
+      const { result: haikuResult } = await runExtraction(img.base64, img.mediaType, HAIKU_MODEL, entry.ocrTranscript);
+      const haikuSanity = checkSanity(haikuResult);
+      if (haikuSanity.violated && haikuSanity.corrections.length > 0) {
+        applyCorrections(haikuResult, haikuSanity.corrections);
+        console.log(`[${sheetId}] Haiku also failed sanity → auto-corrected ${haikuSanity.corrections.length} field(s)`);
+      } else if (haikuSanity.violated) {
+        haikuResult.overall_confidence = Math.min(haikuResult.overall_confidence, 0.55);
+        console.log(`[${sheetId}] Haiku also failed sanity, no correction available → flagged for manual review`);
+      } else {
+        console.log(`[${sheetId}] Haiku escalation clean, confidence=${haikuResult.overall_confidence}`);
+      }
+      entry.finalResult = enforceHardCeilings(haikuResult);
+    } catch (e) {
+      console.log(`[${sheetId}] ERROR during escalation — will retry on next --phase2: ${e}`);
+    }
+  }));
+
+  saveCache(cache);
+  const stillPending = sheetIds.filter((id) => !cache[id].finalResult);
+  if (stillPending.length > 0) {
+    console.log(`\nPhase 2 incomplete — ${stillPending.length} sheet(s) still unresolved (image download failures?). Re-run --phase2.`);
+    return false;
+  }
+  console.log(`\nPhase 2 complete. All ${sheetIds.length} sheet(s) resolved. Proceeding to diff/commit…\n`);
+  return true;
+}
+
+// ─────────────────────────────────────────
+// Diff + commit (shared by normal run and post-phase2 run)
+// ─────────────────────────────────────────
+
+async function diffAndCommit(sheetId: string, newExtraction: ExtractionResult, oldConfidence: number | null, supabase: any): Promise<string> {
+  const lines: string[] = [];
+  const log = (s: string) => lines.push(s);
+  const towers = ['Venus', 'Mercury', 'Neptune', 'Jupiter'] as const;
+  const srcOrder = ['M+V DO with MTR', 'J+N DO with JTR', 'V Well 1+2+3', 'V Well 4+B1+B2', 'N Well 5', 'N Well 6', 'ON Outside Well', 'Kingsley'];
+
+  log(`\nSheet ${sheetId}`);
+
+  const [{ data: oldTower }, { data: oldSources }, { data: oldSummary }] = await Promise.all([
+    supabase.from('tower_consumption').select('tower,type,total_ltrs,confidence').eq('sheet_id', sheetId).order('tower'),
+    supabase.from('water_sources').select('location,total').eq('sheet_id', sheetId).order('location'),
+    supabase.from('summary').select('*').eq('sheet_id', sheetId).single(),
+  ]);
+
+  log('\n  TOWER CONSUMPTION (total_ltrs):');
+  for (const tower of towers) {
+    for (const type of ['DO', 'DR'] as const) {
+      const oldRow = oldTower?.find((r: { tower: string; type: string }) => r.tower === tower && r.type === type);
+      const newRow = newExtraction.tower_section?.[tower]?.[type];
+      const oldVal = oldRow?.total_ltrs ?? 'null';
+      const newVal = newRow?.total_ltrs ?? 'null';
+      const changed = String(oldVal) !== String(newVal);
+      log(`    ${tower} ${type}: ${oldVal} → ${newVal} (confidence ${newRow?.confidence ?? 'n/a'})${changed ? '  ← CHANGED' : ''}`);
+    }
+  }
+
+  log('\n  WATER SOURCES (total):');
+  for (const loc of srcOrder) {
+    const oldRow = oldSources?.find((r: { location: string }) => r.location === loc);
+    const newRow = newExtraction.water_sources?.find((s) => s.location === loc);
+    const oldVal = oldRow?.total ?? 'null';
+    const newVal = newRow?.total ?? 'null';
+    const changed = String(oldVal) !== String(newVal);
+    if (changed || oldVal !== 'null' || newVal !== 'null') {
+      log(`    ${loc}: ${oldVal} → ${newVal}${changed ? '  ← CHANGED' : ''}`);
+    }
+  }
+
+  log('\n  SUMMARY (TOTAL INFLOW columns):');
+  const newSummaryKeys = ['water_inflow', 'well_inflow', 'tanker_inflow', 'input_total', 'tower_usage', 'diff'] as const;
+  for (const key of newSummaryKeys) {
+    const newVal = newExtraction.summary?.[key] ?? 'null';
+    const oldVal = (oldSummary as Record<string, unknown> | null)?.[key] ?? 'null';
+    const changed = String(oldVal) !== String(newVal);
+    log(`    ${key}: ${oldVal} → ${newVal}${changed ? '  ← CHANGED' : ''}`);
+  }
+
+  log(`\n  Old overall_confidence=${oldConfidence} → New=${newExtraction.overall_confidence}`);
+  if (newExtraction.flagged_fields?.length) {
+    log(`  Flagged: ${newExtraction.flagged_fields.join(', ')}`);
+  }
+
+  if (!COMMIT) {
+    log('  [dry run — pass --commit to apply]');
+    return lines.join('\n');
+  }
+
+  log('  Applying to DB…');
+
+  await Promise.all([
+    supabase.from('tower_consumption').delete().eq('sheet_id', sheetId),
+    supabase.from('water_sources').delete().eq('sheet_id', sheetId),
+    supabase.from('water_levels').delete().eq('sheet_id', sheetId),
+    supabase.from('amenities').delete().eq('sheet_id', sheetId),
+    supabase.from('summary').delete().eq('sheet_id', sheetId),
+  ]);
+
+  const towerRows = towers.flatMap((tower) =>
+    (['DO', 'DR'] as const).map((type) => {
+      const d = newExtraction.tower_section[tower][type];
+      return { sheet_id: sheetId, tower, type, r_yesterday: d.r_yesterday, r_today: d.r_today, total_ltrs: d.total_ltrs, vol_yesterday: d.vol_yesterday, vol_today: d.vol_today, diff: d.diff, confidence: d.confidence };
+    })
+  );
+  await supabase.from('tower_consumption').insert(towerRows);
+
+  const sourceRows = newExtraction.water_sources.map((s) => ({
+    sheet_id: sheetId, location: s.location, r_yesterday: s.r_yesterday, r_today: s.r_today,
+    yesterday_ltrs: s.yesterday_ltrs, today_ltrs: s.today_ltrs, total: s.total,
+  }));
+  await supabase.from('water_sources').insert(sourceRows);
+
+  if (newExtraction.water_levels?.length) {
+    const levelRows = newExtraction.water_levels.map((l) => ({
+      sheet_id: sheetId, tank: l.tank, time_slot: l.time_slot, cm_reading: l.cm_reading, percentage: l.percentage,
+    }));
+    await supabase.from('water_levels').insert(levelRows);
+  }
+
+  if (newExtraction.amenities?.length) {
+    const amenityRows = newExtraction.amenities.map((a) => ({
+      sheet_id: sheetId, section: a.section, meter_name: a.meter_name, y_day: a.y_day, r_day: a.r_day, diff: a.diff,
+    }));
+    await supabase.from('amenities').insert(amenityRows);
+  }
+
+  const { confidence: _c, ...summaryFields } = newExtraction.summary;
+  await supabase.from('summary').insert({ sheet_id: sheetId, ...summaryFields });
+
+  await supabase
+    .from('daily_sheets')
+    .update({ confidence_score: newExtraction.overall_confidence })
+    .eq('id', sheetId);
+
+  log(`  ✓ Applied. New confidence=${newExtraction.overall_confidence}`);
+  return lines.join('\n');
 }
 
 // ─────────────────────────────────────────
@@ -268,7 +383,11 @@ async function main() {
 
   let sheetIds = FLAGGED_SHEET_IDS;
 
-  if (QUERY_FLAGGED) {
+  // SHEET_ID=<uuid> env var restricts to a single sheet — useful for running this
+  // script within a time-boxed shell without editing FLAGGED_SHEET_IDS.
+  if (process.env.SHEET_ID) {
+    sheetIds = [process.env.SHEET_ID];
+  } else if (QUERY_FLAGGED) {
     console.log(`\nQuerying for non-superseded sheets with confidence < ${LOW_CONFIDENCE_THRESHOLD}…`);
     const { data: lowConfSheets } = await supabase
       .from('daily_sheets')
@@ -277,167 +396,64 @@ async function main() {
       .eq('processed_status', 'processed')
       .lt('confidence_score', LOW_CONFIDENCE_THRESHOLD)
       .order('date', { ascending: false });
-    sheetIds = (lowConfSheets ?? []).map(s => s.id as string);
+    sheetIds = (lowConfSheets ?? []).map((s: { id: string }) => s.id);
     console.log(`Found ${sheetIds.length} sheet(s) with confidence < ${LOW_CONFIDENCE_THRESHOLD}`);
     if (sheetIds.length === 0) { console.log('Nothing to re-extract.'); return; }
   }
 
   const mistralEnabled = !!process.env.MISTRAL_API_KEY;
-  console.log(`\nRe-extract — ${sheetIds.length} sheet(s) | model=claude-haiku | mistral=${mistralEnabled ? '✓' : '✗'} | commit=${COMMIT}\n${'─'.repeat(65)}`);
+  const geminiEnabled = !!process.env.GEMINI_API_KEY;
 
-  for (const sheetId of sheetIds) {
-    console.log(`\nSheet ${sheetId}`);
+  if (PHASE1) {
+    console.log(`\nRe-extract [phase1] — ${sheetIds.length} sheet(s) | primary=${geminiEnabled ? 'gemini(fallback haiku)' : 'haiku'} | mistral=${mistralEnabled ? '✓' : '✗'}\n${'─'.repeat(65)}`);
+    await runPhase1(sheetIds, supabase);
+    return;
+  }
 
+  if (PHASE2) {
+    console.log(`\nRe-extract [phase2] — ${sheetIds.length} sheet(s) | commit=${COMMIT}\n${'─'.repeat(65)}`);
+    const allResolved = await runPhase2(sheetIds);
+    if (!allResolved) return;
+    const cache = loadCache();
+    const results = await Promise.all(sheetIds.map((id) => diffAndCommit(id, cache[id].finalResult!, cache[id].oldConfidence, supabase)));
+    for (const r of results) console.log(r);
+    console.log(`\n${'─'.repeat(65)}\nDone. ${COMMIT ? 'Changes committed.' : 'Dry run — no changes made.'}\n`);
+    return;
+  }
+
+  // Normal (non-phased) run — single command does primary + escalation + diff + commit
+  // per sheet, all sheets concurrently. Fine on any machine without a per-process
+  // wall-clock cap; use --phase1/--phase2 instead if that's a constraint.
+  console.log(`\nRe-extract — ${sheetIds.length} sheet(s) | primary=${geminiEnabled ? 'gemini(fallback haiku)' : 'haiku'} | mistral=${mistralEnabled ? '✓' : '✗'} | commit=${COMMIT}\n${'─'.repeat(65)}`);
+
+  async function processSheet(sheetId: string): Promise<string> {
     const { data: sheet } = await supabase
       .from('daily_sheets')
       .select('date, image_url, confidence_score')
       .eq('id', sheetId)
       .single();
+    if (!sheet?.image_url) return `\nSheet ${sheetId}\n  SKIP — no image_url`;
 
-    if (!sheet?.image_url) { console.log('  SKIP — no image_url'); continue; }
-    console.log(`  date=${sheet.date}  confidence=${sheet.confidence_score}  url=…${sheet.image_url.slice(-40)}`);
+    const img = await fetchImage(sheet.image_url);
+    if (!img) return `\nSheet ${sheetId}\n  SKIP — image download failed`;
 
-    // Download image
-    let imageBuffer: Buffer;
-    try {
-      const res = await fetch(sheet.image_url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      imageBuffer = Buffer.from(await res.arrayBuffer());
-    } catch (e) {
-      console.log(`  SKIP — image download failed: ${e}`);
-      continue;
-    }
-
-    const ext = sheet.image_url.split('.').pop()?.toLowerCase() ?? 'jpg';
-    const mediaType = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
-    const base64 = imageBuffer.toString('base64');
-
-    // Optionally run Mistral OCR for transcript injection
-    let ocrTranscript: string | null = null;
+    let mistralResult: Awaited<ReturnType<typeof extractTextWithMistralOcr>> | undefined;
     if (mistralEnabled) {
-      process.stdout.write('  Running Mistral OCR… ');
-      ocrTranscript = await runMistralOcr(base64, mediaType);
-      console.log(ocrTranscript ? `${ocrTranscript.length} chars` : 'failed/empty');
+      mistralResult = await extractTextWithMistralOcr(img.base64, img.mediaType);
     }
 
-    // Fetch current DB values for comparison
-    const [{ data: oldTower }, { data: oldSources }, { data: oldSummary }] = await Promise.all([
-      supabase.from('tower_consumption').select('tower,type,total_ltrs,confidence').eq('sheet_id', sheetId).order('tower'),
-      supabase.from('water_sources').select('location,total').eq('sheet_id', sheetId).order('location'),
-      supabase.from('summary').select('*').eq('sheet_id', sheetId).single(),
-    ]);
-
-    // Run new extraction with Haiku + optional Mistral transcript
-    console.log('  Running Haiku extraction…');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let newExtraction: any;
+    let newExtraction: ExtractionResult;
     try {
-      newExtraction = await runExtraction(base64, mediaType, ocrTranscript ?? undefined);
+      newExtraction = await extractSheetData(img.base64, img.mediaType, undefined, mistralResult);
     } catch (e) {
-      console.log(`  ERROR — extraction failed: ${e}`);
-      continue;
+      return `\nSheet ${sheetId}\n  ERROR — extraction failed: ${e}`;
     }
 
-    // ── Print diff ──
-    console.log('\n  TOWER CONSUMPTION (total_ltrs):');
-    const towers = ['Venus', 'Mercury', 'Neptune', 'Jupiter'] as const;
-    for (const tower of towers) {
-      for (const type of ['DO', 'DR'] as const) {
-        const oldRow = oldTower?.find((r) => r.tower === tower && r.type === type);
-        const newRow = newExtraction.tower_section?.[tower]?.[type];
-        const oldVal = oldRow?.total_ltrs ?? 'null';
-        const newVal = newRow?.total_ltrs ?? 'null';
-        const changed = String(oldVal) !== String(newVal);
-        console.log(`    ${tower} ${type}: ${oldVal} → ${newVal}${changed ? '  ← CHANGED' : ''}`);
-      }
-    }
-
-    console.log('\n  WATER SOURCES (total):');
-    const srcOrder = ['M+V DO with MTR','J+N DO with JTR','V Well 1+2+3','V Well 4+B1+B2','N Well 5','N Well 6','ON Outside Well','Kingsley'];
-    for (const loc of srcOrder) {
-      const oldRow = oldSources?.find((r) => r.location === loc);
-      const newRow = newExtraction.water_sources?.find((r: {location:string;total:number|null}) => r.location === loc);
-      const oldVal = oldRow?.total ?? 'null';
-      const newVal = newRow?.total ?? 'null';
-      const changed = String(oldVal) !== String(newVal);
-      if (changed || oldVal !== 'null' || newVal !== 'null') {
-        console.log(`    ${loc}: ${oldVal} → ${newVal}${changed ? '  ← CHANGED' : ''}`);
-      }
-    }
-
-    console.log('\n  SUMMARY (new schema — TOTAL INFLOW columns):');
-    // New fields match the current extraction prompt (Section 6: TOTAL INFLOW table)
-    const newSummaryKeys = ['water_inflow','well_inflow','tanker_inflow','input_total','tower_usage','diff'] as const;
-    for (const key of newSummaryKeys) {
-      const newVal = newExtraction.summary?.[key] ?? 'null';
-      // Old DB summary may have the legacy columns or the new columns (migration 008 added both)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const oldVal = (oldSummary as any)?.[key] ?? 'null';
-      const changed = String(oldVal) !== String(newVal);
-      console.log(`    ${key}: ${oldVal} → ${newVal}${changed ? '  ← CHANGED' : ''}`);
-    }
-
-    console.log(`\n  Old overall_confidence=${sheet.confidence_score} → New=${newExtraction.overall_confidence}`);
-    if (newExtraction.flagged_fields?.length) {
-      console.log(`  Flagged: ${(newExtraction.flagged_fields as string[]).join(', ')}`);
-    }
-
-    if (!COMMIT) {
-      console.log('  [dry run — pass --commit to apply]');
-      continue;
-    }
-
-    // ── Apply to DB ──
-    console.log('  Applying to DB…');
-
-    await Promise.all([
-      supabase.from('tower_consumption').delete().eq('sheet_id', sheetId),
-      supabase.from('water_sources').delete().eq('sheet_id', sheetId),
-      supabase.from('water_levels').delete().eq('sheet_id', sheetId),
-      supabase.from('amenities').delete().eq('sheet_id', sheetId),
-      supabase.from('summary').delete().eq('sheet_id', sheetId),
-    ]);
-
-    const towerRows = towers.flatMap((tower) =>
-      (['DO', 'DR'] as const).map((type) => {
-        const d = newExtraction.tower_section[tower][type];
-        return { sheet_id: sheetId, tower, type, r_yesterday: d.r_yesterday, r_today: d.r_today, total_ltrs: d.total_ltrs, vol_yesterday: d.vol_yesterday, vol_today: d.vol_today, diff: d.diff, confidence: d.confidence };
-      })
-    );
-    await supabase.from('tower_consumption').insert(towerRows);
-
-    const sourceRows = newExtraction.water_sources.map((s: {location:string;r_yesterday:number|null;r_today:number|null;yesterday_ltrs:number|null;today_ltrs:number|null;total:number|null}) => ({
-      sheet_id: sheetId, location: s.location, r_yesterday: s.r_yesterday, r_today: s.r_today,
-      yesterday_ltrs: s.yesterday_ltrs, today_ltrs: s.today_ltrs, total: s.total,
-    }));
-    await supabase.from('water_sources').insert(sourceRows);
-
-    if (newExtraction.water_levels?.length) {
-      const levelRows = newExtraction.water_levels.map((l: {tank:string;time_slot:string;cm_reading:number|null;percentage:number|null}) => ({
-        sheet_id: sheetId, tank: l.tank, time_slot: l.time_slot, cm_reading: l.cm_reading, percentage: l.percentage,
-      }));
-      await supabase.from('water_levels').insert(levelRows);
-    }
-
-    if (newExtraction.amenities?.length) {
-      const amenityRows = newExtraction.amenities.map((a: {section:string;meter_name:string;y_day:number|null;r_day:number|null;diff:number|null}) => ({
-        sheet_id: sheetId, section: a.section, meter_name: a.meter_name, y_day: a.y_day, r_day: a.r_day, diff: a.diff,
-      }));
-      await supabase.from('amenities').insert(amenityRows);
-    }
-
-    // Summary insert — uses new schema fields (water_inflow, well_inflow, tanker_inflow)
-    // which are valid columns in summary after migration 008.
-    const { confidence: _c, ...summaryFields } = newExtraction.summary;
-    await supabase.from('summary').insert({ sheet_id: sheetId, ...summaryFields });
-
-    await supabase
-      .from('daily_sheets')
-      .update({ confidence_score: newExtraction.overall_confidence })
-      .eq('id', sheetId);
-
-    console.log(`  ✓ Applied. New confidence=${newExtraction.overall_confidence}`);
+    return diffAndCommit(sheetId, newExtraction, sheet.confidence_score, supabase);
   }
+
+  const results = await Promise.all(sheetIds.map((id) => processSheet(id)));
+  for (const r of results) console.log(r);
 
   console.log(`\n${'─'.repeat(65)}\nDone. ${COMMIT ? 'Changes committed.' : 'Dry run — no changes made.'}\n`);
 }
