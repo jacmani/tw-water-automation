@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useId } from 'react';
 import Link from 'next/link';
 import { formatDate } from '@/lib/utils';
 
@@ -142,16 +142,19 @@ function Field({ label, value, onChange, computed }: {
   onChange?: (v: string) => void;
   computed?: boolean;
 }) {
+  const id = useId();
   return (
     <div>
-      <label className="block text-slate-500 dark:text-slate-400 text-xs mb-0.5">{label}</label>
+      <label htmlFor={id} className="block text-slate-500 dark:text-slate-400 text-xs mb-0.5">{label}</label>
       <input
+        id={id}
         type="number"
         inputMode="decimal"
         value={value}
         readOnly={computed}
         onChange={computed ? undefined : (e) => onChange?.(e.target.value)}
         placeholder={computed ? '—' : '0'}
+        aria-readonly={computed || undefined}
         className={`w-full rounded-lg px-2.5 py-2 text-sm border text-right tabular-nums
           ${computed
             ? 'bg-slate-100 dark:bg-slate-800/50 border-slate-300 dark:border-slate-700 text-slate-500 dark:text-slate-400 cursor-default'
@@ -176,6 +179,8 @@ export default function LogbookEntryPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState<'draft' | 'submitted' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const dateId = useId();
+  const technicianId = useId();
 
   const updateTower = useCallback((key: string, field: keyof TowerRow, value: string) => {
     setForm((prev) => ({
@@ -345,8 +350,9 @@ export default function LogbookEntryPage() {
           <div className="space-y-4">
             <SectionHeader title="Log Book Header" />
             <div>
-              <label className="block text-slate-500 dark:text-slate-400 text-sm font-medium mb-1">Date</label>
+              <label htmlFor={dateId} className="block text-slate-500 dark:text-slate-400 text-sm font-medium mb-1">Date</label>
               <input
+                id={dateId}
                 type="date"
                 value={form.log_date}
                 onChange={(e) => setForm((p) => ({ ...p, log_date: e.target.value }))}
@@ -355,8 +361,9 @@ export default function LogbookEntryPage() {
               <p className="text-slate-500 dark:text-slate-400 text-xs mt-1">{form.log_date ? formatDate(form.log_date) : ''}</p>
             </div>
             <div>
-              <label className="block text-slate-500 dark:text-slate-400 text-sm font-medium mb-1">Technician Name</label>
+              <label htmlFor={technicianId} className="block text-slate-500 dark:text-slate-400 text-sm font-medium mb-1">Technician Name</label>
               <input
+                id={technicianId}
                 type="text"
                 value={form.technician_name}
                 onChange={(e) => setForm((p) => ({ ...p, technician_name: e.target.value }))}
