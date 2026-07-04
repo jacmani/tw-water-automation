@@ -253,7 +253,15 @@ export interface ClaudeUsage {
   cache_read_input_tokens?: number;
 }
 
-async function runExtraction(
+/**
+ * Exported for use by scripts/re-extract.ts, which needs to split the primary
+ * + escalation calls across separate process invocations (each raw Claude
+ * vision call takes ~20s; some sandboxed execution environments hard-cap a
+ * single command at ~45s, too tight for primary+escalation chained in one
+ * run). Not used by any other production code path — the live upload route
+ * only ever calls the public extractSheetData() wrapper below.
+ */
+export async function runExtraction(
   base64Image: string,
   mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
   model: string,
@@ -445,7 +453,8 @@ function findIndependentReading(
  * vol_today — closing the gap where a single engine's misread of one row's handwriting
  * silently "self-confirms" via another cell in that same misread row.
  */
-function checkSanity(
+/** Exported for scripts/re-extract.ts — see runExtraction doc comment above. */
+export function checkSanity(
   result: ExtractionResult,
   qwenResult?: QwenVisionResult,
   openRouterResult?: OpenRouterVisionResult
@@ -614,7 +623,8 @@ function checkSanity(
  * from same-engine data (vol_today / meter delta / ÷10) after two production incidents
  * where those guesses landed on confident-looking wrong numbers.
  */
-function applyCorrections(result: ExtractionResult, corrections: SanityReport['corrections']): ExtractionResult {
+/** Exported for scripts/re-extract.ts — see runExtraction doc comment above. */
+export function applyCorrections(result: ExtractionResult, corrections: SanityReport['corrections']): ExtractionResult {
   for (const { tower, type, correctedTotal, source } of corrections) {
     const row = result.tower_section?.[tower as 'Venus'|'Mercury'|'Neptune'|'Jupiter']?.[type];
     if (!row) continue;
@@ -639,7 +649,8 @@ function applyCorrections(result: ExtractionResult, corrections: SanityReport['c
  * which engine produced it or whether earlier escalation/correction logic ran.
  * This is the safety net whose absence let Venus DO=1,416,000 L through.
  */
-function enforceHardCeilings(
+/** Exported for scripts/re-extract.ts — see runExtraction doc comment above. */
+export function enforceHardCeilings(
   result: ExtractionResult,
   qwenResult?: QwenVisionResult,
   openRouterResult?: OpenRouterVisionResult
@@ -842,7 +853,8 @@ function resolveWithTieBreaker(
  *   EXTRACTION_PRIMARY=haiku  → Claude Haiku (legacy paid-primary, instant rollback).
  * Returns the result plus the engine label that produced it.
  */
-async function runPrimaryExtraction(
+/** Exported for scripts/re-extract.ts — see runExtraction doc comment above. */
+export async function runPrimaryExtraction(
   base64Image: string,
   mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
   ocrTranscript?: string,
