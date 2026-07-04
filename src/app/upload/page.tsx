@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, ChangeEvent, FormEvent } from 'react';
+import { useState, useRef, useEffect, useId, ChangeEvent, FormEvent } from 'react';
 import Link from 'next/link';
 import Navbar from '@/components/Navbar';
 import Image from 'next/image';
@@ -652,6 +652,7 @@ interface DatePickerScreenProps {
 }
 
 function DatePickerScreen({ imageUrl, aiGuess, onConfirm, onRetake }: DatePickerScreenProps) {
+  const dateInputId = useId();
   // Default to today in IST (UTC+5:30) or the AI guess if available
   const todayIST = () => {
     const now = new Date();
@@ -698,10 +699,11 @@ function DatePickerScreen({ imageUrl, aiGuess, onConfirm, onRetake }: DatePicker
       {/* Date input */}
       <div className="bg-slate-900 border border-slate-700 rounded-xl p-5 space-y-3">
         <div>
-          <label className="block text-slate-400 text-xs font-semibold uppercase tracking-wider mb-2">
+          <label htmlFor={dateInputId} className="block text-slate-400 text-xs font-semibold uppercase tracking-wider mb-2">
             Sheet Date
           </label>
           <input
+            id={dateInputId}
             type="date"
             value={selectedDate}
             max={todayIST()}
@@ -1208,6 +1210,7 @@ export default function UploadPage() {
                           placeholder="e.g. 141600"
                           value={manualTotals[m.key] ?? ''}
                           onChange={e => setManualTotals(prev => ({ ...prev, [m.key]: e.target.value }))}
+                          aria-label={`${m.tower.toUpperCase()} ${m.type} — TOTAL IN LTRS`}
                           className="w-32 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm text-right focus:border-blue-500 focus:outline-none"
                         />
                       </div>
