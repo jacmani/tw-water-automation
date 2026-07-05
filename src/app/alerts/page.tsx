@@ -1,6 +1,7 @@
 import Navbar from '@/components/Navbar';
 import { createServerClient } from '@/lib/supabase';
 import { formatMediumDate, formatIST } from '@/lib/utils';
+import RecipientsCell from '@/components/alerts/RecipientsCell';
 
 export const revalidate = 30;
 
@@ -133,14 +134,7 @@ export default async function AlertsPage() {
                         {row.tower ?? '—'}
                       </td>
                       <td className="px-4 py-3 text-slate-500 dark:text-slate-400 text-xs max-w-xs">
-                        <span
-                          title={row.recipients.join(', ')}
-                          className="cursor-help border-b border-dotted border-slate-400 dark:border-slate-600"
-                        >
-                          {row.recipients.length === 1
-                            ? row.recipients[0]
-                            : `${row.recipients.length} recipients`}
-                        </span>
+                        <RecipientsCell recipients={row.recipients} />
                       </td>
                       <td className="px-4 py-3">
                         <StatusBadge status={row.status} />
