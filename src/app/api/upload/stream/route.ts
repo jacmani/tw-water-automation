@@ -289,8 +289,19 @@ export async function POST(request: NextRequest) {
         });
 
       } catch (err) {
+        // Log the full detail server-side (Vercel function logs), but never
+        // forward a raw internal error (stack traces, JSON parse errors, SDK
+        // error shapes) straight to the technician's screen — a 2026-07-05
+        // incident showed a raw "Unexpected token '`'... is not valid JSON"
+        // SyntaxError reaching the upload UI verbatim. Known, already-friendly
+        // messages (like the one runExtraction throws on unparseable Haiku
+        // output) are still shown as-is; anything else falls back to a
+        // generic retry prompt.
         console.error('[stream] Unexpected error:', err);
-        send({ type: 'error', message: err instanceof Error ? err.message : 'Unexpected error' });
+        const message = err instanceof Error && /please retry|not configured|failed to/i.test(err.message)
+          ? err.message
+          : 'Something went wrong while reading the sheet. Please try again — if it keeps failing, try a clearer photo or better lighting.';
+        send({ type: 'error', message });
         if (fileName) {
           const supabase = createServerClient();
           await supabase.storage.from('sheet-images').remove([fileName]);
