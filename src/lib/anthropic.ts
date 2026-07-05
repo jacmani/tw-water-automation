@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { ExtractionResult } from '@/types';
+import { parseLenientJson } from './jsonRepair';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -254,12 +255,13 @@ export interface ClaudeUsage {
 }
 
 /**
- * Exported for use by scripts/re-extract.ts, which needs to split the primary
- * + escalation calls across separate process invocations (each raw Claude
- * vision call takes ~20s; some sandboxed execution environments hard-cap a
- * single command at ~45s, too tight for primary+escalation chained in one
- * run). Not used by any other production code path — the live upload route
- * only ever calls the public extractSheetData() wrapper below.
+ * This is the actual Claude Haiku call — used both as the primary-fallback
+ * (when GEMINI_API_KEY is unset) and as the paid escalation engine inside
+ * extractSheetDataInner() below. Also exported directly for
+ * scripts/re-extract.ts, which needs to split the primary + escalation calls
+ * across separate process invocations in time-boxed environments (each raw
+ * Claude vision call takes ~20s; some sandboxes hard-cap a single command at
+ * ~45s, too tight for primary+escalation chained in one run).
  */
 export async function runExtraction(
   base64Image: string,
@@ -284,7 +286,16 @@ export async function runExtraction(
 
   const response = await anthropic.beta.promptCaching.messages.create({
     model,
-    max_tokens: 4096,
+    // Was 4096 — raised after a 2026-07-05 production incident: a sheet with
+    // many flagged_fields (each a full sentence, e.g. "summary.input_total:
+    // 291000 disagrees with WATER+WELL+TANKER=237200 on the same row — needs
+    // manual verification") pushed Haiku's response past 4096 tokens, cutting
+    // it off before the closing ``` fence. The single-regex fence-strip below
+    // then fell through to the raw truncated text and crashed JSON.parse,
+    // surfacing a raw SyntaxError to the technician mid-upload. 8192 gives
+    // real headroom for the verbose flagged_fields text without materially
+    // changing cost (Haiku output tokens are billed per-token, not per-cap).
+    max_tokens: 8192,
     system: [{ type: 'text', text: EXTRACTION_PROMPT, cache_control: { type: 'ephemeral' } }],
     messages: [
       {
@@ -303,13 +314,17 @@ export async function runExtraction(
   const content = response.content[0];
   if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
 
-  // Strip markdown fences if present, then parse
-  const text = content.text.trim();
-  const jsonStr = text.startsWith('{')
-    ? text
-    : (text.match(/```(?:json)?\n?([\s\S]*?)\n?```/)?.[1] ?? text);
-
-  const parsed: ExtractionResult = JSON.parse(jsonStr);
+  // Tolerant parse — same repair logic used for Gemini (see jsonRepair.ts):
+  // strips markdown fences, drops trailing commas, and closes dangling
+  // brackets/strings if the response was truncated (raised max_tokens above
+  // should make truncation rare now, but this is the defense-in-depth layer
+  // so a cut-off response degrades to a parse failure we handle below, never
+  // a raw SyntaxError shown to the technician).
+  const parsed = parseLenientJson(content.text) as ExtractionResult | null;
+  if (!parsed || typeof parsed !== 'object') {
+    console.error(`[anthropic] Could not parse Haiku JSON even after repair. First 300 chars: ${content.text.trim().slice(0, 300)}`);
+    throw new Error('Claude Haiku returned a response that could not be read — please retry the upload.');
+  }
   if (!parsed.flagged_fields) parsed.flagged_fields = [];
   return { result: parsed, usage };
 }
