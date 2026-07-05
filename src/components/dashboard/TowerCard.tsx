@@ -6,6 +6,8 @@ import {
   isAboveThreshold,
   percentageDiff,
 } from '@/lib/utils';
+import Card from '@/components/ui/Card';
+import CountUp from '@/components/ui/CountUp';
 
 interface Props {
   data: TowerDashboardData;
@@ -36,7 +38,7 @@ function Sparkline({ points, color }: { points: number[]; color: string }) {
   );
 }
 
-export default function TowerCard({ data }: Props) {
+export default function TowerCard({ data, index = 0 }: Props & { index?: number }) {
   const { tower, total_today, total_yesterday, seven_day_avg, today_do, today_dr, trend } = data;
   const color = TOWER_COLORS[tower];
   const textClass = TOWER_TEXT_CLASSES[tower];
@@ -55,9 +57,11 @@ export default function TowerCard({ data }: Props) {
   const hasData = total_today != null;
 
   return (
-    <div
-      className="bg-white dark:bg-slate-900 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800"
-      style={{ borderLeftColor: color, borderLeftWidth: 3 }}
+    <Card
+      interactive
+      accentColor={color}
+      className="overflow-hidden animate-[fadeInUp_0.35s_cubic-bezier(0.16,1,0.3,1)_both]"
+      style={{ animationDelay: `${index * 60}ms` }}
     >
       <div className="p-3.5">
         <div className="flex items-center justify-between gap-2">
@@ -69,14 +73,14 @@ export default function TowerCard({ data }: Props) {
 
         <div className="mt-2 mb-3">
           {hasData ? (
-            <p className="text-2xl font-bold text-slate-900 dark:text-white leading-none">
-              {formatLitres(total_today)}
+            <p className="text-2xl font-bold text-slate-900 dark:text-white leading-none tabular-nums">
+              <CountUp value={total_today} format={formatLitres} />
             </p>
           ) : (
             <p className="text-xl font-bold text-slate-300 dark:text-slate-600 leading-none">No data</p>
           )}
           {hasData && (
-            <p className="text-slate-400 dark:text-slate-400 text-xs mt-0.5">Today</p>
+            <p className="text-slate-500 dark:text-slate-400 text-xs mt-0.5">Today</p>
           )}
         </div>
 
@@ -105,7 +109,7 @@ export default function TowerCard({ data }: Props) {
 
         {diffPct != null && (
           <div
-            className={`mt-3 rounded-lg px-2 py-1 text-xs font-medium text-center ${
+            className={`mt-3 rounded-lg px-2 py-1 text-xs font-medium text-center transition-colors ${
               isAlert
                 ? 'bg-red-50 dark:bg-red-950 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800'
                 : diffPct > 0
@@ -118,6 +122,6 @@ export default function TowerCard({ data }: Props) {
           </div>
         )}
       </div>
-    </div>
+    </Card>
   );
 }

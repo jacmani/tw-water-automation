@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import Navbar from '@/components/Navbar';
 import { createServerClient } from '@/lib/supabase';
 import { formatMediumDate, formatIST } from '@/lib/utils';
@@ -61,8 +62,13 @@ export default async function AlertsPage() {
       <Navbar />
       <div className="max-w-4xl mx-auto px-4 pt-4 pb-1 flex items-center gap-3">
         <div>
-          <h1 className="text-base font-semibold text-slate-700 dark:text-slate-300">Alert Log</h1>
-          <p className="text-slate-500 dark:text-slate-400 text-xs mt-0.5">Email send history</p>
+          <Link href="/committee/admin" className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors text-xs">
+            ← Committee Admin
+          </Link>
+          <h1 className="text-base font-semibold text-slate-700 dark:text-slate-300 mt-0.5">Alert Log</h1>
+          <p className="text-slate-500 dark:text-slate-400 text-xs mt-0.5">
+            Internal email send history for the committee — spike alerts, weekly and monthly reports.
+          </p>
         </div>
         {isSandbox && (
           <span className="ml-auto bg-amber-100 dark:bg-amber-900/40 border border-amber-300 dark:border-amber-700/50 text-amber-700 dark:text-amber-400 text-xs font-semibold px-2 py-1 rounded">
@@ -95,7 +101,7 @@ export default async function AlertsPage() {
         {logs.length === 0 && !error && (
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-8 text-center">
             <p className="text-slate-500 dark:text-slate-400 text-sm">No alerts sent yet.</p>
-            <p className="text-slate-400 dark:text-slate-600 text-xs mt-1">
+            <p className="text-slate-500 dark:text-slate-400 text-xs mt-1">
               Spike alerts fire automatically on sheet upload. Weekly / monthly reports run via Vercel Cron.
             </p>
           </div>
@@ -162,7 +168,7 @@ export default async function AlertsPage() {
             <span className="bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-400 text-xs font-mono px-2 py-1 rounded">30 2 1 * *</span>
             <span className="text-slate-500 dark:text-slate-400 text-sm">Monthly report — 1st of month 8:00 AM IST</span>
           </div>
-          <p className="text-slate-400 dark:text-slate-600 text-xs">
+          <p className="text-slate-500 dark:text-slate-400 text-xs">
             Both schedules run less than once per day — compatible with Vercel Hobby plan cron limits.
           </p>
         </div>

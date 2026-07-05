@@ -11,6 +11,7 @@ import InflowSummaryPanel from '@/components/dashboard/InflowSummaryPanel';
 import WaterLevelsPanel from '@/components/dashboard/WaterLevelsPanel';
 import AmenitiesPanel from '@/components/dashboard/AmenitiesPanel';
 import Navbar from '@/components/Navbar';
+import Badge from '@/components/ui/Badge';
 import type { DashboardData, TrendChartPoint } from '@/types';
 
 export const revalidate = 60;
@@ -104,12 +105,27 @@ export default async function Dashboard() {
 
         <section>
           {/* Primary, daily-use section — larger label + accent border (audit M1) */}
-          <p className="section-label section-label--primary mb-3">
-            Tower Consumption — {formatMediumDate(sheetDate)}
-          </p>
+          <div className="flex items-center gap-2 mb-3 flex-wrap">
+            <p className="section-label section-label--primary">
+              Tower Consumption — {formatMediumDate(sheetDate)}
+            </p>
+            {/* P2-2: data-provenance chip — was there no way to tell, at a glance,
+                whether today's numbers came from the AI extraction or a manual
+                fallback entry, or how confident the pipeline was. One chip here
+                covers the whole tower section since every card below reads from
+                the same sheet. */}
+            {recentSheet && (
+              <Badge variant={recentSheet.date_source === 'manual' ? 'manual' : 'ai'}>
+                {recentSheet.date_source === 'manual' ? '✋ Manual entry' : '✨ AI extracted'}
+                {recentSheet.confidence_score != null && (
+                  <span className="opacity-70">· {(recentSheet.confidence_score * 100).toFixed(0)}%</span>
+                )}
+              </Badge>
+            )}
+          </div>
           <div className="grid grid-cols-2 gap-3">
-            {dashboardData.towers.map((t) => (
-              <TowerCard key={t.tower} data={t} />
+            {dashboardData.towers.map((t, i) => (
+              <TowerCard key={t.tower} data={t} index={i} />
             ))}
           </div>
         </section>

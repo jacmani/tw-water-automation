@@ -40,7 +40,10 @@ function IconCommittee(props: React.SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
-function IconAlerts(props: React.SVGProps<SVGSVGElement>) {
+// Exported so the committee/admin page can link to /alerts with the same
+// icon (P2-1 — Alerts is ops-internal, demoted out of the resident-facing
+// nav, but still reachable for committee members from the admin panel).
+export function IconAlerts(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
       <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.7 21a2 2 0 0 1-3.4 0" />
@@ -57,12 +60,16 @@ function LogoMark(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
+// Alerts (P2-1) was removed from here — it's an internal ops log (email send
+// history, spike thresholds) with no resident-facing purpose, and it was one
+// tap away in the primary nav next to Dashboard/History/Committee. It's still
+// reachable at /alerts, now linked from the (PIN-gated) committee admin panel
+// instead of advertised to every visitor.
 const NAV_LINKS = [
   { href: '/',           label: 'Dashboard',  Icon: IconDashboard },
   { href: '/history',    label: 'History',    Icon: IconHistory },
   { href: '/logbook',    label: 'Log Book',   Icon: IconLogbook },
   { href: '/committee',  label: 'Committee',  Icon: IconCommittee },
-  { href: '/alerts',     label: 'Alerts',     Icon: IconAlerts },
 ];
 
 export default function Navbar() {
@@ -84,6 +91,17 @@ export default function Navbar() {
 
   // Close on route change
   useEffect(() => { setOpen(false); }, [pathname]);
+
+  // Close on Escape (P1-3) — the drawer previously had no keyboard-only way
+  // to dismiss it once open; a mouse click on the backdrop was the only exit.
+  useEffect(() => {
+    if (!open) return;
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [open]);
 
   // Prevent body scroll when drawer open
   useEffect(() => {
@@ -148,7 +166,7 @@ export default function Navbar() {
           {!isUpload && (
             <Link
               href="/upload"
-              className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white text-sm font-semibold px-3 py-2 md:px-4 rounded-xl transition-colors shadow-sm shadow-blue-600/30 flex-shrink-0"
+              className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 active:scale-[0.98] active:bg-blue-700 text-white text-sm font-semibold px-3 py-2 md:px-4 rounded-xl transition-all shadow-sm shadow-blue-600/30 flex-shrink-0"
             >
               <span className="text-base leading-none">↑</span>
               <span className="hidden xs:inline">Upload Sheet</span>
@@ -202,7 +220,7 @@ export default function Navbar() {
 
             {/* Divider + theme toggle */}
             <div className="flex items-center justify-between px-3 pt-3 mt-2 border-t border-slate-100 dark:border-slate-800">
-              <span className="text-xs text-slate-400 dark:text-slate-500 font-medium">Appearance</span>
+              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Appearance</span>
               <ThemeToggle />
             </div>
           </nav>

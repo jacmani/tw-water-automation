@@ -45,6 +45,7 @@ export interface DailySheet {
   image_url: string | null;
   processed_status: 'pending' | 'processed' | 'failed';
   confidence_score: number | null;
+  date_source: 'ai' | 'manual' | null;
   superseded: boolean;
   created_at: string;
 }

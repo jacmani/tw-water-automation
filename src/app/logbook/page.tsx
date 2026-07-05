@@ -36,7 +36,7 @@ const SLOT_LABELS: Record<string, string> = {
 };
 
 function Val({ v }: { v: number | null | undefined }) {
-  if (v == null) return <span className="text-slate-400 dark:text-slate-600">—</span>;
+  if (v == null) return <span className="text-slate-500 dark:text-slate-400">—</span>;
   return <>{v.toLocaleString('en-IN')}</>;
 }
 

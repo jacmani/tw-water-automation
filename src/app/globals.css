@@ -64,3 +64,82 @@ body {
 .section-label--primary {
   @apply text-[13px] font-bold uppercase tracking-wider text-slate-700 dark:text-slate-200 border-l-[3px] border-blue-500 pl-2;
 }
+
+/* Focus-visible ring (P1-3, WCAG 2.4.7 Focus Visible / 2.4.11 Focus Appearance).
+   Before this, no interactive element in the app showed any indication of
+   keyboard focus — a keyboard-only user tabbing through the upload flow or
+   dashboard had no way to tell which control was active. `:focus-visible`
+   (not `:focus`) means this only shows for keyboard/programmatic focus, never
+   for a mouse click, so it doesn't add a visual ring to every button tap on
+   the touchscreen-first upload flow. */
+:focus-visible {
+  outline: 2px solid #3B82F6;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* A handful of tightly-packed controls (nav links, table row chevrons, icon
+   buttons) look better with the ring pulled in slightly rather than offset. */
+.focus-ring-tight:focus-visible {
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── Shared micro-interaction keyframes ──────────────────────────────────────
+   "Confident & snappy" motion language: quick (150-400ms), ease-out-expo,
+   no bounce/spring. Used by the upload success screen, dashboard cards, the
+   PIN gate, and anywhere else that wants a consistent entrance/feedback feel
+   instead of a one-off inline animation. Reference by name, e.g.
+   `animate-[fadeInUp_0.3s_cubic-bezier(0.16,1,0.3,1)_both]`.
+────────────────────────────────────────────────────────────────────────── */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.94); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* Success checkmark — the circle "pops" in, then the tick draws along its
+   path via stroke-dashoffset (set --tick-length to the path's length inline). */
+@keyframes popIn {
+  0%   { opacity: 0; transform: scale(0.5); }
+  60%  { opacity: 1; transform: scale(1.08); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes drawTick {
+  from { stroke-dashoffset: var(--tick-length, 24); }
+  to   { stroke-dashoffset: 0; }
+}
+
+@keyframes countUpFade {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to   { background-position: 200% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, var(--bg-card-alt) 25%, var(--border) 50%, var(--bg-card-alt) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}

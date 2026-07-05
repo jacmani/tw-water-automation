@@ -10,6 +10,77 @@ import type { ExtractionResult } from '@/types';
 import { formatDate, formatMediumDate } from '@/lib/utils';
 import TemplateOverall from '@/components/infographics/TemplateOverall';
 import type { TemplateOverallProps } from '@/components/infographics/TemplateOverall';
+import CountUp from '@/components/ui/CountUp';
+
+// ── Icons (P2-7) ─────────────────────────────────────────────────────────────
+// Replaces the last remaining OS-rendered emoji glyphs in the upload flow
+// (📷 📅 ⏳ ✅ ⚠️ ❌ 🔍) with the same outline SVG style already used in
+// Navbar.tsx — consistent weight/color across OS and browsers, and it can
+// inherit `currentColor` so it follows dark/light theming automatically.
+function CameraIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M4 8a2 2 0 0 1 2-2h1.2l1-1.5h7.6l1 1.5H18a2 2 0 0 1 2 2v9.5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8Z" />
+      <circle cx="12" cy="13" r="3.4" />
+    </svg>
+  );
+}
+function CalendarWarnIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <rect x="3" y="5" width="18" height="16" rx="2" />
+      <path d="M3 10h18M8 3v4M16 3v4" />
+      <path d="M12 14v2.5" />
+      <circle cx="12" cy="19" r="0.6" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+function IconInfo(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <circle cx="12" cy="12" r="9" /><path d="M12 11v5.5" /><circle cx="12" cy="7.8" r="0.6" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+function IconCheck(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.25} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M4.5 12.5l5 5 10-11" />
+    </svg>
+  );
+}
+function IconWarnTriangle(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M10.6 3.9 2.2 18.5A1.5 1.5 0 0 0 3.5 21h17a1.5 1.5 0 0 0 1.3-2.5L13.4 3.9a1.5 1.5 0 0 0-2.8 0Z" />
+      <path d="M12 9.5v4.2" /><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+function IconErrorX(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <circle cx="12" cy="12" r="9" /><path d="M9 9l6 6M15 9l-6 6" />
+    </svg>
+  );
+}
+function IconSearch(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <circle cx="10.5" cy="10.5" r="6.5" /><path d="M20 20l-4.8-4.8" />
+    </svg>
+  );
+}
+
+function LevelIcon({ level, className }: { level: LogLevel; className?: string }) {
+  switch (level) {
+    case 'success': return <IconCheck className={className} />;
+    case 'warn':    return <IconWarnTriangle className={className} />;
+    case 'error':   return <IconErrorX className={className} />;
+    case 'engine':  return <IconSearch className={className} />;
+    default:        return <IconInfo className={className} />;
+  }
+}
 
 // ── Live processing log types ────────────────────────────────────────────────
 type LogLevel = 'info' | 'success' | 'warn' | 'error' | 'engine';
@@ -23,13 +94,55 @@ interface LogEntry {
 }
 
 // ── ProcessingLog component ──────────────────────────────────────────────────
-const LEVEL_ICON: Record<LogLevel, string> = {
-  info:    '⏳',
-  success: '✅',
-  warn:    '⚠️',
-  error:   '❌',
-  engine:  '🔍',
-};
+// P2-8: the raw engine log ("Qwen3-VL-8B ✓ (free, 640ms)", "Agreement gate
+// FAILED — 1 tower disagreement(s)") is genuinely useful for debugging but
+// reads like an API trace, not something a technician glances at each
+// morning. friendlyLogMessage() maps recognizable message shapes to a plain-
+// language headline; anything it doesn't recognize just falls through
+// unchanged, so nothing is ever hidden or lost — the full technical message
+// is still shown underneath in the existing muted `detail` line.
+const FRIENDLY_RULES: { test: RegExp; to: (m: string) => string }[] = [
+  { test: /^Uploading image to storage/, to: () => 'Saving your photo…' },
+  { test: /^Image stored/, to: () => 'Photo saved' },
+  { test: /^Phase 1 — running \d+ free engines in parallel/, to: () => 'Reading your sheet with several AI checks at once…' },
+  { test: /^Qwen3-VL-8B ✓/, to: () => 'First AI check — done' },
+  { test: /^Qwen3-VL-8B — no result/, to: () => 'First AI check skipped' },
+  { test: /^Mistral OCR 3 ✓/, to: () => 'Handwriting reader — done' },
+  { test: /^Mistral OCR 3 — no result/, to: () => 'Handwriting reader skipped' },
+  { test: /^Google Vision ✓/, to: () => 'Double-checking the numbers — done' },
+  { test: /^Google Vision — no text/, to: () => 'Number double-check skipped' },
+  { test: /^OCR\.space Engine 2 ✓/, to: () => 'Extra number check — done' },
+  { test: /^OCR\.space — no text/, to: () => 'Extra number check skipped' },
+  { test: /^Phase 2 — primary extraction/, to: () => 'Reading every number on the sheet…' },
+  { test: /^Agreement gate — cross-checking/, to: () => 'Cross-checking the numbers between AI engines…' },
+  { test: /^Agreement gate PASSED/, to: () => 'Numbers agree — looking good' },
+  { test: /^Agreement gate FAILED/, to: (m) => `Found something worth double-checking${m.includes('—') ? ':' + m.split('—')[1] : ''}` },
+  { test: /^Free tie-breaker/, to: () => 'Getting a second opinion (still free)…' },
+  { test: /^OpenRouter ✓/, to: () => 'Second opinion — done' },
+  { test: /^OpenRouter tie-breaker unavailable/, to: () => 'Second opinion unavailable' },
+  { test: /^Tie-breaker resolved/, to: (m) => m.replace(/^Tie-breaker/, 'Second opinion') },
+  { test: /^Resolved entirely by free engines/, to: () => 'All clear — no extra cost needed' },
+  { test: /^Escalating to Claude Haiku/, to: () => 'Asking a more careful AI to take a closer look (small cost)…' },
+  { test: /^Claude Haiku ✓/, to: () => 'Careful re-check — done' },
+  { test: /^Final tower totals/, to: () => 'Tower totals calculated' },
+  { test: /^Date read:/, to: (m) => m.replace(/^Date read:/, 'Date found:') },
+  { test: /^Date implausible/, to: () => 'That date looks unlikely — please confirm it below' },
+  { test: /^Cross-validation ✓/, to: () => 'Numbers double-checked against the sheet — all consistent' },
+  { test: /^Low OCR corroboration/, to: () => 'A few numbers could not be fully double-checked' },
+  { test: /^Date mismatch between engines/, to: () => 'The AI engines read the date differently — please confirm it below' },
+  { test: /^─── Scan cost breakdown ───/, to: () => 'Cost for this scan' },
+  { test: /^💰 Total this scan/, to: (m) => m.replace('💰 ', '') },
+  { test: /^✓ Done in/, to: (m) => m.replace('✓ Done in', 'All done in') },
+  { test: /^Preparing result/, to: () => 'Almost there…' },
+];
+
+function friendlyLogMessage(message: string): string {
+  for (const rule of FRIENDLY_RULES) {
+    if (rule.test.test(message)) return rule.to(message);
+  }
+  return message;
+}
+
 const LEVEL_MSG_COLOR: Record<LogLevel, string> = {
   info:    'text-blue-600 dark:text-blue-300',
   success: 'text-emerald-700 dark:text-emerald-400',
@@ -83,21 +196,28 @@ function ProcessingLog({ entries, live = true }: { entries: LogEntry[]; live?: b
         {!live && <span className="ml-auto text-slate-500 dark:text-slate-500 text-xs">{open ? '▾ hide' : '▸ show'}</span>}
       </button>
       {open && (
-        <div className="px-4 py-3 space-y-1.5 font-mono text-xs max-h-96 overflow-y-auto scrollbar-thin">
-          {entries.map((e) => (
-            <div key={e.id} className="flex items-start gap-2">
-              <span className="flex-shrink-0 w-4 text-center">{LEVEL_ICON[e.level]}</span>
-              <span className={`flex-1 leading-snug ${LEVEL_MSG_COLOR[e.level]}`}>
-                {e.message}
+        <div className="px-4 py-3 space-y-2 text-xs max-h-96 overflow-y-auto scrollbar-thin">
+          {entries.map((e) => {
+            const friendly = friendlyLogMessage(e.message);
+            const wasTranslated = friendly !== e.message;
+            return (
+            <div key={e.id} className="flex items-start gap-2 animate-[fadeInUp_0.2s_ease-out_both]">
+              <LevelIcon level={e.level} className={`flex-shrink-0 w-3.5 h-3.5 mt-0.5 ${LEVEL_MSG_COLOR[e.level]}`} />
+              <span className="flex-1 leading-snug">
+                <span className={`font-medium ${LEVEL_MSG_COLOR[e.level]}`}>{friendly}</span>
                 {e.detail && (
                   <span className={`ml-2 ${LEVEL_DETAIL_COLOR[e.level]}`}>— {e.detail}</span>
                 )}
+                {wasTranslated && (
+                  <span className="block font-mono text-[10px] text-slate-400 dark:text-slate-600 mt-0.5">{e.message}</span>
+                )}
               </span>
               {e.elapsed != null && (
-                <span className="flex-shrink-0 text-slate-300 dark:text-slate-700 tabular-nums">{(e.elapsed / 1000).toFixed(1)}s</span>
+                <span className="flex-shrink-0 text-slate-300 dark:text-slate-700 tabular-nums font-mono">{(e.elapsed / 1000).toFixed(1)}s</span>
               )}
             </div>
-          ))}
+            );
+          })}
           <div ref={bottomRef} />
         </div>
       )}
@@ -201,7 +321,7 @@ function ProgressDisplay({ status, preview }: { status: Status; preview: string 
           <span key={s.id} className={
             i < stepIdx ? 'text-emerald-600 dark:text-emerald-400 font-medium'
             : i === stepIdx ? 'text-blue-600 dark:text-blue-300 font-semibold'
-            : 'text-slate-400 dark:text-slate-600'
+            : 'text-slate-500 dark:text-slate-400'
           }>{i < stepIdx ? '✓ ' : ''}{s.label}</span>
         ))}
       </div>
@@ -531,6 +651,7 @@ const INTERNAL_FLAG_PREFIXES = [
   'opus_reason:',          // legacy
   'resolved_by:',
   'warning:',
+  'date_implausible:',     // already surfaced via the date-confirmation banner, not a sheet-section flag
 ];
 function isInternalFlag(raw: string): boolean {
   const r = raw.trim().toLowerCase();
@@ -680,7 +801,7 @@ function DatePickerScreen({ imageUrl, aiGuess, onConfirm, onRetake }: DatePicker
       {/* Warning banner */}
       <div className="bg-amber-50 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-600/60 rounded-xl p-4">
         <div className="flex gap-3 items-start">
-          <span className="text-amber-600 dark:text-amber-400 text-xl flex-shrink-0">📅</span>
+          <CalendarWarnIcon className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0" />
           <div>
             <p className="text-amber-700 dark:text-amber-300 font-semibold text-sm">Couldn&apos;t read the date automatically</p>
             <p className="text-slate-500 dark:text-slate-400 text-xs mt-1 leading-relaxed">
@@ -739,7 +860,7 @@ function DatePickerScreen({ imageUrl, aiGuess, onConfirm, onRetake }: DatePicker
         <button
           onClick={handleConfirm}
           disabled={!selectedDate}
-          className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-200 dark:disabled:bg-slate-700 disabled:cursor-not-allowed text-white disabled:text-slate-400 py-3 rounded-xl font-semibold transition-colors"
+          className="flex-1 bg-blue-600 hover:bg-blue-500 active:scale-[0.98] disabled:bg-slate-200 dark:disabled:bg-slate-700 disabled:cursor-not-allowed text-white disabled:text-slate-400 py-3 rounded-xl font-semibold transition-all"
         >
           Save with This Date
         </button>
@@ -1047,28 +1168,47 @@ export default function UploadPage() {
 
         {status === 'success' && saveResult && (
           <div className="space-y-4">
-            {/* Status header */}
-            <div className="bg-emerald-50 dark:bg-emerald-900/25 border border-emerald-300 dark:border-emerald-700/50 rounded-xl p-5 text-center">
-              <div className="text-3xl mb-1 text-emerald-600 dark:text-emerald-400 font-bold">✓</div>
+            {/* Status header — animated checkmark draws in (circle, then tick),
+                confidence % and community total count up rather than just
+                appearing. "Confident & snappy": ~0.6s total, no bounce. */}
+            <div className="bg-emerald-50 dark:bg-emerald-900/25 border border-emerald-300 dark:border-emerald-700/50 rounded-xl p-5 text-center animate-[popIn_0.4s_cubic-bezier(0.16,1,0.3,1)_both]">
+              <svg width="56" height="56" viewBox="0 0 56 56" className="mx-auto mb-1 text-emerald-600 dark:text-emerald-400" aria-hidden="true">
+                <circle
+                  cx="28" cy="28" r="25" fill="none" stroke="currentColor" strokeWidth="3" opacity="0.25"
+                />
+                <circle
+                  cx="28" cy="28" r="25" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"
+                  style={{ '--tick-length': 157, strokeDasharray: 157, animation: 'drawTick 0.55s cubic-bezier(0.16,1,0.3,1) 0.05s both' } as React.CSSProperties}
+                />
+                <path
+                  d="M17 29l7 7 15-15" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"
+                  style={{ '--tick-length': 32, strokeDasharray: 32, animation: 'drawTick 0.3s cubic-bezier(0.16,1,0.3,1) 0.5s both' } as React.CSSProperties}
+                />
+              </svg>
               <p className="text-emerald-700 dark:text-emerald-400 font-semibold text-lg">Sheet processed &amp; saved</p>
               {saveResult.date && <p className="text-slate-600 dark:text-slate-300 text-sm mt-1">{formatDate(saveResult.date)}</p>}
               {saveResult.confidence != null && (
-                <p className={`text-sm mt-1.5 font-medium ${confidenceColor}`}>
-                  Extraction confidence: {Math.round(saveResult.confidence * 100)}%
+                <p className={`text-sm mt-1.5 font-medium tabular-nums ${confidenceColor}`}>
+                  Extraction confidence: <CountUp value={Math.round(saveResult.confidence * 100)} format={(n) => `${Math.round(n)}%`} durationMs={600} />
                 </p>
               )}
             </div>
 
             {/* Mini summary card */}
             {communityTotalForDisplay > 0 && (
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-4">
+              <div
+                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-4 animate-[fadeInUp_0.35s_cubic-bezier(0.16,1,0.3,1)_both]"
+                style={{ animationDelay: '120ms' }}
+              >
                 {/* Labelled by the sheet's own reading date, not the calendar day it was
                     uploaded — the technician uploads each morning a sheet covering the
                     PREVIOUS day's readings, so "today" here would be wrong. */}
                 <p className="text-slate-500 dark:text-slate-500 text-xs font-semibold uppercase tracking-wider mb-1">
                   Community Total{saveResult.date ? ` — ${formatMediumDate(saveResult.date)}` : ''}
                 </p>
-                <p className="text-slate-900 dark:text-white text-2xl font-bold">{(communityTotalForDisplay / 1000).toFixed(1)} kL</p>
+                <p className="text-slate-900 dark:text-white text-2xl font-bold tabular-nums">
+                  <CountUp value={communityTotalForDisplay / 1000} format={(n) => `${n.toFixed(1)} kL`} />
+                </p>
                 {towerSpikesForDisplay.length > 0 && (
                   <div className="space-y-1 pt-2 mt-2 border-t border-slate-200 dark:border-slate-800">
                     {towerSpikesForDisplay.map(s => (
@@ -1085,7 +1225,8 @@ export default function UploadPage() {
             <button
               onClick={sharePoster}
               disabled={shareState === 'generating' || !posterData}
-              className="w-full flex items-center justify-center gap-2 bg-[#25D366] hover:bg-[#1db954] disabled:bg-slate-700 disabled:cursor-not-allowed text-[#0B3D1F] disabled:text-white font-bold py-4 rounded-xl text-base transition-colors"
+              className="w-full flex items-center justify-center gap-2 bg-[#25D366] hover:bg-[#1db954] active:scale-[0.98] disabled:bg-slate-700 disabled:cursor-not-allowed disabled:active:scale-100 text-[#0B3D1F] disabled:text-white font-bold py-4 rounded-xl text-base transition-all animate-[fadeInUp_0.35s_cubic-bezier(0.16,1,0.3,1)_both]"
+              style={{ animationDelay: '200ms' }}
             >
               {shareState === 'generating' || (!posterData && shareState !== 'error') ? (
                 <>
@@ -1104,19 +1245,23 @@ export default function UploadPage() {
               )}
             </button>
 
-            <FlaggedPanel
-              flaggedFields={saveResult.flagged_fields ?? []}
-              imageUrl={confirmPayload?.image_url ?? null}
-            />
+            <div className="animate-[fadeIn_0.3s_ease-out_both]" style={{ animationDelay: '260ms' }}>
+              <FlaggedPanel
+                flaggedFields={saveResult.flagged_fields ?? []}
+                imageUrl={confirmPayload?.image_url ?? null}
+              />
+            </div>
 
             {/* Persistent processing trace + cost — collapsed, survives the screen switch */}
-            <ProcessingLog entries={logEntries} live={false} />
+            <div className="animate-[fadeIn_0.3s_ease-out_both]" style={{ animationDelay: '300ms' }}>
+              <ProcessingLog entries={logEntries} live={false} />
+            </div>
 
-            <div className="flex gap-3">
-              <button onClick={resetToIdle} className="flex-1 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-900 dark:text-white py-3 rounded-xl font-medium transition-colors">
+            <div className="flex gap-3 animate-[fadeInUp_0.35s_cubic-bezier(0.16,1,0.3,1)_both]" style={{ animationDelay: '340ms' }}>
+              <button onClick={resetToIdle} className="flex-1 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 active:scale-[0.98] text-slate-900 dark:text-white py-3 rounded-xl font-medium transition-all">
                 Upload Another
               </button>
-              <Link href="/" className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-xl font-medium text-center transition-colors">
+              <Link href="/" className="flex-1 bg-blue-600 hover:bg-blue-500 active:scale-[0.98] text-white py-3 rounded-xl font-medium text-center transition-all">
                 View Dashboard
               </Link>
             </div>
@@ -1193,7 +1338,7 @@ export default function UploadPage() {
                     {missing.length} reading{missing.length > 1 ? 's' : ''} couldn&apos;t be read — please copy {missing.length > 1 ? 'them' : 'it'} from your sheet
                   </p>
                   <p className="text-slate-500 dark:text-slate-400 text-xs">
-                    On your Trinity World log book, find the row below in the top <span className="text-slate-700 dark:text-slate-300 font-medium">METER READING</span> table and type the value from the <span className="text-slate-700 dark:text-slate-300 font-medium">&ldquo;TOTAL IN LTRS&rdquo;</span> column.
+                    On the paper sheet in front of you, find the row below in the top <span className="text-slate-700 dark:text-slate-300 font-medium">METER READING</span> table and type the value from the <span className="text-slate-700 dark:text-slate-300 font-medium">&ldquo;TOTAL IN LTRS&rdquo;</span> column.
                   </p>
                   {missing.map(m => (
                     <div key={m.key} className="bg-white dark:bg-slate-900/60 rounded-lg p-3 space-y-1.5">
@@ -1235,7 +1380,7 @@ export default function UploadPage() {
                   const v = manualTotals[m.key]?.replace(/[, ]/g, '');
                   return v && Number(v) > 0;
                 })}
-                className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-200 dark:disabled:bg-slate-700 disabled:cursor-not-allowed text-white disabled:text-slate-400 py-3 rounded-xl font-semibold transition-colors"
+                className="flex-1 bg-blue-600 hover:bg-blue-500 active:scale-[0.98] disabled:bg-slate-200 dark:disabled:bg-slate-700 disabled:cursor-not-allowed text-white disabled:text-slate-400 py-3 rounded-xl font-semibold transition-all"
               >
                 Confirm &amp; Save
               </button>
@@ -1258,18 +1403,18 @@ export default function UploadPage() {
               ) : (
                 <label className="flex flex-col items-center justify-center w-full h-48 bg-white dark:bg-slate-800 border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-xl cursor-pointer hover:border-blue-400 dark:hover:border-blue-500 hover:bg-blue-50/50 dark:hover:bg-slate-800/80 transition-colors">
                   <div className="text-center px-4">
-                    <div className="text-4xl mb-2">📷</div>
+                    <CameraIcon className="w-9 h-9 mb-2 mx-auto text-slate-400 dark:text-slate-500" />
                     <p className="text-slate-700 dark:text-slate-300 font-medium text-sm">Tap to photograph today&apos;s water sheet</p>
-                    <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">JPG, PNG or HEIC accepted</p>
+                    <p className="text-slate-500 dark:text-slate-400 text-xs mt-1">JPG, PNG or HEIC accepted</p>
                   </div>
                   <input ref={fileInputRef} type="file" accept="image/*" capture="environment" onChange={handleFileChange} className="hidden" required />
                 </label>
               )}
             </div>
-            <button type="submit" disabled={!file} className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-slate-200 dark:disabled:bg-slate-700 disabled:cursor-not-allowed text-white disabled:text-slate-400 font-semibold py-4 rounded-xl text-base transition-colors">
+            <button type="submit" disabled={!file} className="w-full bg-blue-600 hover:bg-blue-500 active:scale-[0.98] disabled:bg-slate-200 dark:disabled:bg-slate-700 disabled:cursor-not-allowed text-white disabled:text-slate-400 font-semibold py-4 rounded-xl text-base transition-all">
               Upload Sheet
             </button>
-            <p className="text-slate-400 dark:text-slate-500 text-xs text-center">No login needed. AI reads the date automatically.</p>
+            <p className="text-slate-500 dark:text-slate-400 text-xs text-center">No login needed. AI reads the date automatically.</p>
             <div className="border-t border-slate-200 dark:border-slate-800 pt-4 text-center">
               <p className="text-slate-500 dark:text-slate-500 text-xs mb-2">Prefer to enter data manually?</p>
               <Link href="/upload/logbook" className="inline-block text-sm text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 border border-blue-300 dark:border-blue-800 hover:border-blue-400 dark:hover:border-blue-600 rounded-lg px-4 py-2 transition-colors">

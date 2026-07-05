@@ -945,7 +945,7 @@ function LogbookEntryForm() {
             <button
               onClick={() => save(true)}
               disabled={saving}
-              className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white py-3 rounded-xl font-semibold text-sm transition-colors"
+              className="flex-1 bg-blue-600 hover:bg-blue-500 active:scale-[0.98] disabled:opacity-50 text-white py-3 rounded-xl font-semibold text-sm transition-all"
             >
               {saving ? 'Saving…' : 'Submit'}
             </button>

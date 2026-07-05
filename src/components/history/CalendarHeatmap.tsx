@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { useTheme } from 'next-themes';
 import type { SheetRecord, Flag } from './types';
 
 const CELL = 20;
@@ -60,30 +61,40 @@ function buildMonthLabels(weeks: (string | null)[][]): { name: string; col: numb
   return labels;
 }
 
-function cellColor(pct: number | null, hasData: boolean): { bg: string; glow: string } {
-  if (!hasData) return { bg: '#0A0F1E', glow: 'none' };
-  if (pct === null) return { bg: '#1E293B', glow: 'none' };
+// Theme-aware cell palette. Previously every state here was a hardcoded dark
+// hex value, so the heatmap rendered as a dark island inside an otherwise
+// light-themed /history page (ClickUp P2-4). `isDark` now picks the right
+// half of each pair so empty/no-data cells blend into their card instead of
+// showing up as near-black squares on a white background.
+function cellColor(pct: number | null, hasData: boolean, isDark: boolean): { bg: string; glow: string } {
+  if (!hasData) return { bg: isDark ? '#0A0F1E' : '#E2E8F0', glow: 'none' };
+  if (pct === null) return { bg: isDark ? '#1E293B' : '#CBD5E1', glow: 'none' };
 
   if (Math.abs(pct) < 5) {
-    return { bg: 'linear-gradient(135deg, #334155 0%, #2D3B4F 100%)', glow: 'none' };
+    return {
+      bg: isDark
+        ? 'linear-gradient(135deg, #334155 0%, #2D3B4F 100%)'
+        : 'linear-gradient(135deg, #E2E8F0 0%, #CBD5E1 100%)',
+      glow: 'none',
+    };
   }
   if (pct < 0) {
     // Blues — below average
     const t = Math.min(-pct / 60, 1);
-    const l = Math.round(28 + t * 28);
+    const l = isDark ? Math.round(28 + t * 28) : Math.round(62 + t * 18);
     const s2 = Math.round(60 + t * 20);
     return {
-      bg: `linear-gradient(135deg, hsl(215,${s2}%,${l}%) 0%, hsl(220,${s2}%,${Math.round(l * 0.8)}%) 100%)`,
-      glow: t > 0.5 ? `0 0 6px hsl(215,${s2}%,${l}%)50` : 'none',
+      bg: `linear-gradient(135deg, hsl(215,${s2}%,${l}%) 0%, hsl(220,${s2}%,${Math.round(isDark ? l * 0.8 : l * 0.88)}%) 100%)`,
+      glow: isDark && t > 0.5 ? `0 0 6px hsl(215,${s2}%,${l}%)50` : 'none',
     };
   }
   // Oranges → Reds — above average
   const t = Math.min(pct / 60, 1);
   const h = Math.round(28 - t * 28);
-  const l = Math.round(32 + t * 14);
+  const l = isDark ? Math.round(32 + t * 14) : Math.round(64 + t * 12);
   return {
-    bg: `linear-gradient(135deg, hsl(${h},90%,${l}%) 0%, hsl(${h - 5},90%,${Math.round(l * 0.78)}%) 100%)`,
-    glow: t > 0.5 ? `0 0 6px hsl(${h},90%,${l}%)60` : 'none',
+    bg: `linear-gradient(135deg, hsl(${h},90%,${l}%) 0%, hsl(${h - 5},90%,${Math.round(isDark ? l * 0.78 : l * 0.88)}%) 100%)`,
+    glow: isDark && t > 0.5 ? `0 0 6px hsl(${h},90%,${l}%)60` : 'none',
   };
 }
 
@@ -122,20 +133,20 @@ function CellTooltip({ data, containerRef }: { data: TooltipData; containerRef: 
       className="absolute z-50 pointer-events-none"
       style={{ left: pos.left, top: pos.top }}
     >
-      <div className="bg-slate-800 border border-slate-600 rounded-xl shadow-2xl p-3 w-52 text-xs">
+      <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-xl shadow-2xl p-3 w-52 text-xs">
         {/* Date */}
-        <p className="text-white font-semibold mb-2 leading-tight">{formatDate(cell.date)}</p>
+        <p className="text-slate-900 dark:text-white font-semibold mb-2 leading-tight">{formatDate(cell.date)}</p>
 
         {!cell.hasSheet && (
-          <p className="text-slate-500 italic">No sheet uploaded</p>
+          <p className="text-slate-500 dark:text-slate-400 italic">No sheet uploaded</p>
         )}
 
         {cell.hasSheet && (
           <>
             {/* Value */}
             <div className="flex justify-between items-center mb-1.5">
-              <span className="text-slate-400">Consumption</span>
-              <span className="text-white font-bold text-sm">
+              <span className="text-slate-500 dark:text-slate-400">Consumption</span>
+              <span className="text-slate-900 dark:text-white font-bold text-sm">
                 {cell.value != null ? `${(cell.value / 1000).toFixed(1)} kL` : '—'}
               </span>
             </div>
@@ -143,13 +154,13 @@ function CellTooltip({ data, containerRef }: { data: TooltipData; containerRef: 
             {/* Deviation bar */}
             {cell.deviationPct != null && (
               <div className="mb-2">
-                <div className="flex justify-between text-slate-400 mb-1">
+                <div className="flex justify-between text-slate-500 dark:text-slate-400 mb-1">
                   <span>vs avg</span>
-                  <span className={cell.deviationPct > 0 ? 'text-orange-400' : 'text-blue-400'}>
+                  <span className={cell.deviationPct > 0 ? 'text-orange-600 dark:text-orange-400' : 'text-blue-600 dark:text-blue-400'}>
                     {cell.deviationPct > 0 ? '+' : ''}{cell.deviationPct.toFixed(1)}%
                   </span>
                 </div>
-                <div className="h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                <div className="h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
                   <div
                     className="h-full rounded-full transition-all"
                     style={{
@@ -174,7 +185,7 @@ function CellTooltip({ data, containerRef }: { data: TooltipData; containerRef: 
               </div>
             )}
             {cell.flag && cell.flag.type === 'ok' && (
-              <div className="flex items-center gap-1.5 text-emerald-400 mt-1">
+              <div className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400 mt-1">
                 <span>✓</span>
                 <span>Data looks good</span>
               </div>
@@ -198,6 +209,14 @@ interface Props {
 export default function CalendarHeatmap({ sheets, getValue, label, startDate, endDate, color = '#7C3AED' }: Props) {
   const [tooltip, setTooltip] = useState<TooltipData | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const { resolvedTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const isDark = !mounted || resolvedTheme === 'dark';
+  const axisLabelColor = isDark ? '#94a3b8' : '#475569';
+  const emptySlotColor = isDark ? '#05080F' : '#F8FAFC';
+  const noSheetSwatch = isDark ? '#0A0F1E' : '#E2E8F0';
+  const noSheetBorder = isDark ? '#1e293b' : '#CBD5E1';
 
   const byDate = new Map(sheets.map(s => [s.date, s]));
   const weeks = buildCalendar(startDate, endDate);
@@ -244,7 +263,7 @@ export default function CalendarHeatmap({ sheets, getValue, label, startDate, en
           {/* Day labels */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: GAP, paddingTop: 24, minWidth: 28 }}>
             {DAY_LABELS.map((d, i) => (
-              <div key={i} style={{ height: CELL, fontSize: 10, color: '#475569', lineHeight: `${CELL}px`, textAlign: 'right' }}>
+              <div key={i} style={{ height: CELL, fontSize: 10, color: axisLabelColor, lineHeight: `${CELL}px`, textAlign: 'right' }}>
                 {d}
               </div>
             ))}
@@ -257,7 +276,7 @@ export default function CalendarHeatmap({ sheets, getValue, label, startDate, en
               {monthLabels.map(({ name, col }) => (
                 <span
                   key={col}
-                  style={{ position: 'absolute', left: col * STEP, fontSize: 10, color: '#64748B', whiteSpace: 'nowrap', fontWeight: 600 }}
+                  style={{ position: 'absolute', left: col * STEP, fontSize: 10, color: axisLabelColor, whiteSpace: 'nowrap', fontWeight: 600 }}
                 >
                   {name}
                 </span>
@@ -271,12 +290,12 @@ export default function CalendarHeatmap({ sheets, getValue, label, startDate, en
                   {week.map((date, dIdx) => {
                     if (!date) {
                       return (
-                        <div key={dIdx} style={{ width: CELL, height: CELL, borderRadius: 4, background: '#05080F' }} />
+                        <div key={dIdx} style={{ width: CELL, height: CELL, borderRadius: 4, background: emptySlotColor }} />
                       );
                     }
                     const cell = cells.get(date);
                     const hasSheet = byDate.has(date);
-                    const { bg, glow } = cell ? cellColor(cell.deviationPct, hasSheet) : { bg: '#0F172A', glow: 'none' };
+                    const { bg, glow } = cell ? cellColor(cell.deviationPct, hasSheet, isDark) : cellColor(null, false, isDark);
                     const isFlagged = cell?.flag && cell.flag.type !== 'ok';
 
                     return (
@@ -318,9 +337,9 @@ export default function CalendarHeatmap({ sheets, getValue, label, startDate, en
 
       {/* Legend */}
       <div className="flex items-center gap-2.5 mt-4 flex-wrap">
-        <span className="text-slate-600 text-xs">Below avg</span>
+        <span className="text-slate-500 dark:text-slate-400 text-xs">Below avg</span>
         {[-50, -20, 0, 20, 50].map(pct => {
-          const { bg } = cellColor(pct, true);
+          const { bg } = cellColor(pct, true, isDark);
           return (
             <div
               key={pct}
@@ -328,11 +347,11 @@ export default function CalendarHeatmap({ sheets, getValue, label, startDate, en
             />
           );
         })}
-        <span className="text-slate-600 text-xs">Above avg</span>
-        <div style={{ width: CELL, height: CELL, borderRadius: 4, background: '#0A0F1E', border: '1px solid #1e293b', flexShrink: 0 }} />
-        <span className="text-slate-600 text-xs">No sheet</span>
+        <span className="text-slate-500 dark:text-slate-400 text-xs">Above avg</span>
+        <div style={{ width: CELL, height: CELL, borderRadius: 4, background: noSheetSwatch, border: `1px solid ${noSheetBorder}`, flexShrink: 0 }} />
+        <span className="text-slate-500 dark:text-slate-400 text-xs">No sheet</span>
         {mean != null && (
-          <span className="text-slate-500 text-xs ml-auto font-medium">
+          <span className="text-slate-500 dark:text-slate-400 text-xs ml-auto font-medium">
             Avg: {(mean / 1000).toFixed(0)} kL/day
           </span>
         )}

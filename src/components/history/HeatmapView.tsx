@@ -61,7 +61,7 @@ export default function HeatmapView({ sheets, towerFilter, startDate, endDate }:
         </div>
       )}
 
-      <p className="text-slate-400 dark:text-slate-600 text-xs mt-3">
+      <p className="text-slate-500 dark:text-slate-400 text-xs mt-3">
         Hover / tap a cell for exact date, value, and flag. Amber border = flagged day.
       </p>
     </div>
