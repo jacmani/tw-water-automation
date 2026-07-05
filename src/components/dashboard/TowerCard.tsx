@@ -1,3 +1,13 @@
+'use client';
+
+// Needs 'use client': it renders <CountUp>, a Client Component that takes a
+// `format` function prop. Passing a function prop from a Server Component
+// (this file, as imported by the Server-Component dashboard page) into a
+// Client Component isn't allowed — functions aren't serializable across the
+// RSC boundary — which is exactly what broke the 9267bc0 build ("Functions
+// cannot be passed directly to Client Components"). Marking this file
+// 'use client' keeps it and CountUp in the same client bundle, so no
+// serialization is needed.
 import type { TowerDashboardData } from '@/types';
 import {
   TOWER_COLORS,
