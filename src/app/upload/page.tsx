@@ -31,18 +31,18 @@ const LEVEL_ICON: Record<LogLevel, string> = {
   engine:  '🔍',
 };
 const LEVEL_MSG_COLOR: Record<LogLevel, string> = {
-  info:    'text-blue-300',
-  success: 'text-emerald-400',
-  warn:    'text-yellow-400',
-  error:   'text-red-400',
-  engine:  'text-violet-300',
+  info:    'text-blue-600 dark:text-blue-300',
+  success: 'text-emerald-700 dark:text-emerald-400',
+  warn:    'text-amber-700 dark:text-yellow-400',
+  error:   'text-red-600 dark:text-red-400',
+  engine:  'text-violet-700 dark:text-violet-300',
 };
 const LEVEL_DETAIL_COLOR: Record<LogLevel, string> = {
-  info:    'text-slate-500',
-  success: 'text-slate-500',
-  warn:    'text-yellow-600',
-  error:   'text-red-600',
-  engine:  'text-slate-500',
+  info:    'text-slate-500 dark:text-slate-400',
+  success: 'text-slate-500 dark:text-slate-400',
+  warn:    'text-amber-700 dark:text-yellow-500',
+  error:   'text-red-600 dark:text-red-400',
+  engine:  'text-slate-500 dark:text-slate-400',
 };
 
 // `live` = still streaming (auto-scrolls, pulsing dot, always open).
@@ -64,23 +64,23 @@ function ProcessingLog({ entries, live = true }: { entries: LogEntry[]; live?: b
   const costLine = [...entries].reverse().find(e => e.message.includes('Total this scan'));
 
   return (
-    <div className="mt-4 bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
+    <div className="mt-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
       <button
         type="button"
         onClick={() => !live && setOpen(o => !o)}
-        className="w-full flex items-center gap-2 px-4 py-2.5 border-b border-slate-800 text-left"
+        className="w-full flex items-center gap-2 px-4 py-2.5 border-b border-slate-200 dark:border-slate-800 text-left"
       >
-        <span className={`w-2 h-2 rounded-full ${live ? 'bg-blue-400 animate-pulse' : 'bg-slate-500'}`} />
-        <span className="text-slate-400 text-xs font-semibold uppercase tracking-wider">
+        <span className={`w-2 h-2 rounded-full ${live ? 'bg-blue-400 animate-pulse' : 'bg-slate-400 dark:bg-slate-500'}`} />
+        <span className="text-slate-500 dark:text-slate-400 text-xs font-semibold uppercase tracking-wider">
           {live ? 'Live Processing Log' : 'Processing details'}
         </span>
         {/* Always-visible cost chip once the scan is done */}
         {!live && costLine && (
-          <span className="ml-2 text-emerald-400 text-xs font-medium normal-case tracking-normal">
+          <span className="ml-2 text-emerald-600 dark:text-emerald-400 text-xs font-medium normal-case tracking-normal">
             {costLine.message.replace(/^💰\s*Total this scan:\s*/, '💰 ')}
           </span>
         )}
-        {!live && <span className="ml-auto text-slate-500 text-xs">{open ? '▾ hide' : '▸ show'}</span>}
+        {!live && <span className="ml-auto text-slate-500 dark:text-slate-500 text-xs">{open ? '▾ hide' : '▸ show'}</span>}
       </button>
       {open && (
         <div className="px-4 py-3 space-y-1.5 font-mono text-xs max-h-96 overflow-y-auto scrollbar-thin">
@@ -94,7 +94,7 @@ function ProcessingLog({ entries, live = true }: { entries: LogEntry[]; live?: b
                 )}
               </span>
               {e.elapsed != null && (
-                <span className="flex-shrink-0 text-slate-700 tabular-nums">{(e.elapsed / 1000).toFixed(1)}s</span>
+                <span className="flex-shrink-0 text-slate-300 dark:text-slate-700 tabular-nums">{(e.elapsed / 1000).toFixed(1)}s</span>
               )}
             </div>
           ))}
@@ -178,11 +178,14 @@ function ProgressDisplay({ status, preview }: { status: Status; preview: string 
   return (
     <div className="space-y-6">
       {preview && (
-        <div className="rounded-xl overflow-hidden bg-slate-800 border border-slate-700 relative">
+        <div className="rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 relative">
           <Image src={preview} alt="Sheet being processed" width={400} height={240}
             className="w-full object-contain max-h-52 opacity-60" unoptimized />
           {status === 'extracting' && (
             <div className="absolute inset-0 flex items-center justify-center">
+              {/* Always-dark scrim regardless of site theme — it sits on top of an
+                  arbitrary photo, not page chrome, and needs guaranteed contrast
+                  against whatever colors are in that photo. */}
               <div className="bg-slate-900/85 backdrop-blur-sm rounded-xl px-4 py-3 flex items-center gap-3 max-w-xs">
                 <span className="w-5 h-5 border-2 border-slate-600 border-t-blue-400 rounded-full animate-spin flex-shrink-0" />
                 <span className="text-blue-300 text-sm font-medium leading-snug">
@@ -196,17 +199,17 @@ function ProgressDisplay({ status, preview }: { status: Status; preview: string 
       <div className="flex justify-between text-xs mb-1 px-0.5">
         {STEPS.map((s, i) => (
           <span key={s.id} className={
-            i < stepIdx ? 'text-emerald-400 font-medium'
-            : i === stepIdx ? 'text-blue-300 font-semibold'
-            : 'text-slate-600'
+            i < stepIdx ? 'text-emerald-600 dark:text-emerald-400 font-medium'
+            : i === stepIdx ? 'text-blue-600 dark:text-blue-300 font-semibold'
+            : 'text-slate-400 dark:text-slate-600'
           }>{i < stepIdx ? '✓ ' : ''}{s.label}</span>
         ))}
       </div>
-      <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+      <div className="h-2 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
         <div className="h-full bg-blue-500 rounded-full transition-all duration-700 ease-out"
           style={{ width: `${overallPct}%` }} />
       </div>
-      <p className="text-center text-slate-400 text-sm">
+      <p className="text-center text-slate-500 dark:text-slate-400 text-sm">
         {status === 'compressing' && 'Preparing your photo…'}
         {status === 'extracting' && 'This takes 15–30 seconds. Please wait.'}
         {status === 'saving' && 'Writing to database…'}
@@ -214,7 +217,7 @@ function ProgressDisplay({ status, preview }: { status: Status; preview: string 
       <div className="flex justify-center gap-2">
         {STEPS.map((s, i) => (
           <div key={s.id} className={`w-2 h-2 rounded-full transition-all duration-300 ${
-            i < stepIdx ? 'bg-emerald-400' : i === stepIdx ? 'bg-blue-400 scale-125' : 'bg-slate-700'
+            i < stepIdx ? 'bg-emerald-400' : i === stepIdx ? 'bg-blue-400 scale-125' : 'bg-slate-300 dark:bg-slate-700'
           }`} />
         ))}
       </div>
@@ -507,10 +510,10 @@ function AnnotatedCanvas({ imageUrl, flags }: { imageUrl: string; flags: FlagInf
   }, [imageUrl, flags]);
 
   return (
-    <div className="relative rounded-lg overflow-hidden bg-slate-800 border border-slate-700">
+    <div className="relative rounded-lg overflow-hidden bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700">
       <canvas ref={canvasRef} className="w-full" style={{ display: ready ? 'block' : 'none' }} />
       {!ready && (
-        <div className="h-48 flex items-center justify-center text-slate-500 text-sm animate-pulse">
+        <div className="h-48 flex items-center justify-center text-slate-500 dark:text-slate-500 text-sm animate-pulse">
           Loading sheet image…
         </div>
       )}
@@ -561,19 +564,19 @@ function FlagCard({ flag, index }: { flag: FlagInfo; index: number }) {
       <div className="flex items-center gap-3 px-4 py-2.5" style={{ backgroundColor: color + '22' }}>
         <span className="w-7 h-7 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0"
           style={{ backgroundColor: color }}>{index}</span>
-        <span className="text-white font-semibold text-sm">{sectionName}</span>
+        <span className="text-slate-900 dark:text-white font-semibold text-sm">{sectionName}</span>
         {severity === 'fixed' && (
-          <span className="ml-auto text-emerald-400 text-xs font-medium">✓ auto-fixed</span>
+          <span className="ml-auto text-emerald-700 dark:text-emerald-400 text-xs font-medium">✓ auto-fixed</span>
         )}
       </div>
-      <div className="bg-slate-900 px-4 py-3 space-y-2">
+      <div className="bg-white dark:bg-slate-900 px-4 py-3 space-y-2">
         <div className="flex items-start gap-2">
-          <span className="text-slate-500 text-xs mt-0.5 flex-shrink-0">📍 Row</span>
-          <span className="text-slate-200 text-sm font-medium">{rowHint}</span>
+          <span className="text-slate-500 dark:text-slate-500 text-xs mt-0.5 flex-shrink-0">📍 Row</span>
+          <span className="text-slate-700 dark:text-slate-200 text-sm font-medium">{rowHint}</span>
         </div>
         <div className="flex items-start gap-2">
-          <span className="text-slate-500 text-xs mt-0.5 flex-shrink-0">{severity === 'fixed' ? 'ℹ️ Note' : '⚠️ Check'}</span>
-          <span className="text-slate-300 text-sm leading-snug">{problem}</span>
+          <span className="text-slate-500 dark:text-slate-500 text-xs mt-0.5 flex-shrink-0">{severity === 'fixed' ? 'ℹ️ Note' : '⚠️ Check'}</span>
+          <span className="text-slate-600 dark:text-slate-300 text-sm leading-snug">{problem}</span>
         </div>
       </div>
     </div>
@@ -599,13 +602,13 @@ function FlaggedPanel({ flaggedFields, imageUrl }: { flaggedFields: string[]; im
   return (
     <div className="space-y-4">
       {/* Calm, reassuring summary header */}
-      <div className={`rounded-xl p-4 border ${nReview > 0 ? 'bg-amber-900/15 border-amber-700/40' : 'bg-emerald-900/15 border-emerald-700/40'}`}>
-        <p className={`font-semibold text-sm mb-1 ${nReview > 0 ? 'text-amber-300' : 'text-emerald-300'}`}>
+      <div className={`rounded-xl p-4 border ${nReview > 0 ? 'bg-amber-50 dark:bg-amber-900/15 border-amber-300 dark:border-amber-700/40' : 'bg-emerald-50 dark:bg-emerald-900/15 border-emerald-300 dark:border-emerald-700/40'}`}>
+        <p className={`font-semibold text-sm mb-1 ${nReview > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-emerald-700 dark:text-emerald-300'}`}>
           {nReview > 0
             ? `Saved — ${nReview} reading${nReview > 1 ? 's' : ''} to double-check`
             : '✓ Saved — everything looks good'}
         </p>
-        <p className="text-slate-400 text-xs">
+        <p className="text-slate-500 dark:text-slate-400 text-xs">
           {nFixed > 0 && `We auto-corrected ${nFixed} unclear value${nFixed > 1 ? 's' : ''}. `}
           {nReview > 0
             ? 'Please glance at the highlighted rows below against your sheet — the data is saved either way.'
@@ -629,7 +632,7 @@ function FlaggedPanel({ flaggedFields, imageUrl }: { flaggedFields: string[]; im
         <div className="space-y-3">
           <button
             onClick={() => setShowFixed(v => !v)}
-            className="w-full text-left text-xs text-slate-400 hover:text-slate-200 flex items-center gap-2 px-1"
+            className="w-full text-left text-xs text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 flex items-center gap-2 px-1"
           >
             <span>{showFixed ? '▾' : '▸'}</span>
             <span>{nFixed} reading{nFixed > 1 ? 's' : ''} we auto-corrected (tap to {showFixed ? 'hide' : 'review'})</span>
@@ -675,12 +678,12 @@ function DatePickerScreen({ imageUrl, aiGuess, onConfirm, onRetake }: DatePicker
   return (
     <div className="space-y-5">
       {/* Warning banner */}
-      <div className="bg-amber-900/30 border border-amber-600/60 rounded-xl p-4">
+      <div className="bg-amber-50 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-600/60 rounded-xl p-4">
         <div className="flex gap-3 items-start">
-          <span className="text-amber-400 text-xl flex-shrink-0">📅</span>
+          <span className="text-amber-600 dark:text-amber-400 text-xl flex-shrink-0">📅</span>
           <div>
-            <p className="text-amber-300 font-semibold text-sm">Couldn&apos;t read the date automatically</p>
-            <p className="text-slate-400 text-xs mt-1 leading-relaxed">
+            <p className="text-amber-700 dark:text-amber-300 font-semibold text-sm">Couldn&apos;t read the date automatically</p>
+            <p className="text-slate-500 dark:text-slate-400 text-xs mt-1 leading-relaxed">
               The AI couldn&apos;t read the date from this sheet with enough confidence. Please enter the correct date
               — this is the only field you need to provide.{aiGuess ? ' The AI\'s best guess is pre-filled below.' : ''}
             </p>
@@ -690,16 +693,16 @@ function DatePickerScreen({ imageUrl, aiGuess, onConfirm, onRetake }: DatePicker
 
       {/* Sheet thumbnail */}
       {imageUrl && (
-        <div className="rounded-xl overflow-hidden bg-slate-800 border border-slate-700">
+        <div className="rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700">
           <Image src={imageUrl} alt="Sheet preview" width={400} height={200}
             className="w-full object-contain max-h-48" unoptimized />
         </div>
       )}
 
       {/* Date input */}
-      <div className="bg-slate-900 border border-slate-700 rounded-xl p-5 space-y-3">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-5 space-y-3">
         <div>
-          <label htmlFor={dateInputId} className="block text-slate-400 text-xs font-semibold uppercase tracking-wider mb-2">
+          <label htmlFor={dateInputId} className="block text-slate-500 dark:text-slate-400 text-xs font-semibold uppercase tracking-wider mb-2">
             Sheet Date
           </label>
           <input
@@ -708,18 +711,18 @@ function DatePickerScreen({ imageUrl, aiGuess, onConfirm, onRetake }: DatePicker
             value={selectedDate}
             max={todayIST()}
             onChange={(e) => { setSelectedDate(e.target.value); setError(''); }}
-            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-3 text-white text-lg font-semibold focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+            className="w-full bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg px-4 py-3 text-slate-900 dark:text-white text-lg font-semibold focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
           />
-          {error && <p className="text-red-400 text-xs mt-1.5">{error}</p>}
+          {error && <p className="text-red-600 dark:text-red-400 text-xs mt-1.5">{error}</p>}
         </div>
         {aiGuess && (
-          <p className="text-slate-500 text-xs">
+          <p className="text-slate-500 dark:text-slate-500 text-xs">
             AI guessed: {formatDate(aiGuess)}{aiGuess !== selectedDate ? ' — change above if different.' : ''}
           </p>
         )}
-        <div className="bg-blue-950/50 border border-blue-800/50 rounded-lg px-3 py-2 flex gap-2 items-start">
-          <span className="text-blue-400 text-xs flex-shrink-0 mt-0.5">ℹ️</span>
-          <p className="text-blue-300 text-xs leading-relaxed">
+        <div className="bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800/50 rounded-lg px-3 py-2 flex gap-2 items-start">
+          <span className="text-blue-600 dark:text-blue-400 text-xs flex-shrink-0 mt-0.5">ℹ️</span>
+          <p className="text-blue-700 dark:text-blue-300 text-xs leading-relaxed">
             This entry will be flagged as <strong>manually dated</strong> in the history view so the committee is aware.
           </p>
         </div>
@@ -729,14 +732,14 @@ function DatePickerScreen({ imageUrl, aiGuess, onConfirm, onRetake }: DatePicker
       <div className="flex gap-3">
         <button
           onClick={onRetake}
-          className="flex-1 bg-slate-800 hover:bg-slate-700 text-white py-3 rounded-xl font-medium transition-colors"
+          className="flex-1 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-900 dark:text-white py-3 rounded-xl font-medium transition-colors"
         >
           Retake Photo
         </button>
         <button
           onClick={handleConfirm}
           disabled={!selectedDate}
-          className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:cursor-not-allowed text-white py-3 rounded-xl font-semibold transition-colors"
+          className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-200 dark:disabled:bg-slate-700 disabled:cursor-not-allowed text-white disabled:text-slate-400 py-3 rounded-xl font-semibold transition-colors"
         >
           Save with This Date
         </button>
@@ -1011,8 +1014,8 @@ export default function UploadPage() {
   }
 
   const confidenceColor = saveResult?.confidence != null
-    ? saveResult.confidence >= 0.9 ? 'text-emerald-400'
-      : saveResult.confidence >= 0.75 ? 'text-yellow-400' : 'text-red-400'
+    ? saveResult.confidence >= 0.9 ? 'text-emerald-600 dark:text-emerald-400'
+      : saveResult.confidence >= 0.75 ? 'text-amber-700 dark:text-yellow-400' : 'text-red-600 dark:text-red-400'
     : '';
 
   // Success screen derived values — safe to compute unconditionally (all guard against null)
@@ -1045,10 +1048,10 @@ export default function UploadPage() {
         {status === 'success' && saveResult && (
           <div className="space-y-4">
             {/* Status header */}
-            <div className="bg-emerald-900/25 border border-emerald-700/50 rounded-xl p-5 text-center">
-              <div className="text-3xl mb-1 text-emerald-400 font-bold">✓</div>
-              <p className="text-emerald-400 font-semibold text-lg">Sheet processed &amp; saved</p>
-              {saveResult.date && <p className="text-slate-300 text-sm mt-1">{formatDate(saveResult.date)}</p>}
+            <div className="bg-emerald-50 dark:bg-emerald-900/25 border border-emerald-300 dark:border-emerald-700/50 rounded-xl p-5 text-center">
+              <div className="text-3xl mb-1 text-emerald-600 dark:text-emerald-400 font-bold">✓</div>
+              <p className="text-emerald-700 dark:text-emerald-400 font-semibold text-lg">Sheet processed &amp; saved</p>
+              {saveResult.date && <p className="text-slate-600 dark:text-slate-300 text-sm mt-1">{formatDate(saveResult.date)}</p>}
               {saveResult.confidence != null && (
                 <p className={`text-sm mt-1.5 font-medium ${confidenceColor}`}>
                   Extraction confidence: {Math.round(saveResult.confidence * 100)}%
@@ -1058,18 +1061,18 @@ export default function UploadPage() {
 
             {/* Mini summary card */}
             {communityTotalForDisplay > 0 && (
-              <div className="bg-slate-900 border border-slate-700 rounded-xl p-4">
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-4">
                 {/* Labelled by the sheet's own reading date, not the calendar day it was
                     uploaded — the technician uploads each morning a sheet covering the
                     PREVIOUS day's readings, so "today" here would be wrong. */}
-                <p className="text-slate-500 text-xs font-semibold uppercase tracking-wider mb-1">
+                <p className="text-slate-500 dark:text-slate-500 text-xs font-semibold uppercase tracking-wider mb-1">
                   Community Total{saveResult.date ? ` — ${formatMediumDate(saveResult.date)}` : ''}
                 </p>
-                <p className="text-white text-2xl font-bold">{(communityTotalForDisplay / 1000).toFixed(1)} kL</p>
+                <p className="text-slate-900 dark:text-white text-2xl font-bold">{(communityTotalForDisplay / 1000).toFixed(1)} kL</p>
                 {towerSpikesForDisplay.length > 0 && (
-                  <div className="space-y-1 pt-2 mt-2 border-t border-slate-800">
+                  <div className="space-y-1 pt-2 mt-2 border-t border-slate-200 dark:border-slate-800">
                     {towerSpikesForDisplay.map(s => (
-                      <p key={s.tower} className="text-amber-400 text-sm font-medium">
+                      <p key={s.tower} className="text-amber-600 dark:text-amber-400 text-sm font-medium">
                         ⚠ {s.tower} Tower: +{s.overagePct}% above avg
                       </p>
                     ))}
@@ -1110,7 +1113,7 @@ export default function UploadPage() {
             <ProcessingLog entries={logEntries} live={false} />
 
             <div className="flex gap-3">
-              <button onClick={resetToIdle} className="flex-1 bg-slate-800 hover:bg-slate-700 text-white py-3 rounded-xl font-medium transition-colors">
+              <button onClick={resetToIdle} className="flex-1 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-900 dark:text-white py-3 rounded-xl font-medium transition-colors">
                 Upload Another
               </button>
               <Link href="/" className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-xl font-medium text-center transition-colors">
@@ -1155,26 +1158,26 @@ export default function UploadPage() {
 
         {status === 'error_other' && (
           <div className="space-y-5">
-            <div className="bg-red-900/30 border border-red-700 rounded-xl p-4">
-              <p className="text-red-400 text-sm">{saveResult?.error ?? 'Upload failed — please try again on WiFi.'}</p>
+            <div className="bg-red-50 dark:bg-red-900/30 border border-red-300 dark:border-red-700 rounded-xl p-4">
+              <p className="text-red-600 dark:text-red-400 text-sm">{saveResult?.error ?? 'Upload failed — please try again on WiFi.'}</p>
             </div>
-            <button onClick={resetToIdle} className="w-full bg-slate-800 hover:bg-slate-700 text-white py-3 rounded-xl font-medium transition-colors">Try Again</button>
+            <button onClick={resetToIdle} className="w-full bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-900 dark:text-white py-3 rounded-xl font-medium transition-colors">Try Again</button>
           </div>
         )}
 
         {status === 'confirming' && confirmPayload && confirmPayload.extracted_date && (
           <div className="space-y-4">
             {preview && (
-              <div className="rounded-xl overflow-hidden bg-slate-800 border border-slate-700">
+              <div className="rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700">
                 <Image src={preview} alt="Sheet preview" width={400} height={200} className="w-full object-contain max-h-48" unoptimized />
               </div>
             )}
-            <div className="bg-slate-900 border border-slate-700 rounded-xl p-5">
-              <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-1">Date found on sheet</p>
-              <p className="text-white text-xl font-bold mt-1">{formatDate(confirmPayload.extracted_date)}</p>
-              <p className="text-emerald-400 text-xs mt-1.5">AI confidence: {Math.round(confirmPayload.date_confidence * 100)}%</p>
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-5">
+              <p className="text-slate-500 dark:text-slate-400 text-xs font-semibold uppercase tracking-wider mb-1">Date found on sheet</p>
+              <p className="text-slate-900 dark:text-white text-xl font-bold mt-1">{formatDate(confirmPayload.extracted_date)}</p>
+              <p className="text-emerald-600 dark:text-emerald-400 text-xs mt-1.5">AI confidence: {Math.round(confirmPayload.date_confidence * 100)}%</p>
             </div>
-            <p className="text-slate-400 text-sm text-center">Does this date look correct?</p>
+            <p className="text-slate-500 dark:text-slate-400 text-sm text-center">Does this date look correct?</p>
 
             {/* Required manual entry for tower totals the AI could not read */}
             {(() => {
@@ -1185,23 +1188,23 @@ export default function UploadPage() {
                 return v && Number(v) > 0;
               });
               return (
-                <div className="bg-amber-900/15 border border-amber-700/40 rounded-xl p-4 space-y-3">
-                  <p className="text-amber-300 font-semibold text-sm">
+                <div className="bg-amber-50 dark:bg-amber-900/15 border border-amber-300 dark:border-amber-700/40 rounded-xl p-4 space-y-3">
+                  <p className="text-amber-700 dark:text-amber-300 font-semibold text-sm">
                     {missing.length} reading{missing.length > 1 ? 's' : ''} couldn&apos;t be read — please copy {missing.length > 1 ? 'them' : 'it'} from your sheet
                   </p>
-                  <p className="text-slate-400 text-xs">
-                    On your Trinity World log book, find the row below in the top <span className="text-slate-300 font-medium">METER READING</span> table and type the value from the <span className="text-slate-300 font-medium">&ldquo;TOTAL IN LTRS&rdquo;</span> column.
+                  <p className="text-slate-500 dark:text-slate-400 text-xs">
+                    On your Trinity World log book, find the row below in the top <span className="text-slate-700 dark:text-slate-300 font-medium">METER READING</span> table and type the value from the <span className="text-slate-700 dark:text-slate-300 font-medium">&ldquo;TOTAL IN LTRS&rdquo;</span> column.
                   </p>
                   {missing.map(m => (
-                    <div key={m.key} className="bg-slate-900/60 rounded-lg p-3 space-y-1.5">
+                    <div key={m.key} className="bg-white dark:bg-slate-900/60 rounded-lg p-3 space-y-1.5">
                       <div className="flex items-center gap-3">
                         <div className="flex-1">
                           {/* Row name EXACTLY as printed on the sheet, e.g. "VENUS DO" */}
-                          <p className="text-white text-sm font-bold tracking-wide">
+                          <p className="text-slate-900 dark:text-white text-sm font-bold tracking-wide">
                             {m.tower.toUpperCase()} {m.type}
                           </p>
-                          <p className="text-slate-400 text-[11px] mt-0.5">
-                            Row &ldquo;{m.tower.toUpperCase()} {m.type}&rdquo; · {m.type === 'DO' ? 'Domestic / Overhead' : 'Drinking water'} · <span className="text-amber-300/90">TOTAL IN LTRS</span> column
+                          <p className="text-slate-500 dark:text-slate-400 text-[11px] mt-0.5">
+                            Row &ldquo;{m.tower.toUpperCase()} {m.type}&rdquo; · {m.type === 'DO' ? 'Domestic / Overhead' : 'Drinking water'} · <span className="text-amber-700 dark:text-amber-300/90">TOTAL IN LTRS</span> column
                           </p>
                         </div>
                         <input
@@ -1211,28 +1214,28 @@ export default function UploadPage() {
                           value={manualTotals[m.key] ?? ''}
                           onChange={e => setManualTotals(prev => ({ ...prev, [m.key]: e.target.value }))}
                           aria-label={`${m.tower.toUpperCase()} ${m.type} — TOTAL IN LTRS`}
-                          className="w-32 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm text-right focus:border-blue-500 focus:outline-none"
+                          className="w-32 bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-slate-900 dark:text-white text-sm text-right focus:border-blue-500 focus:outline-none"
                         />
                       </div>
                     </div>
                   ))}
-                  <p className="text-slate-500 text-[11px]">
+                  <p className="text-slate-500 dark:text-slate-500 text-[11px]">
                     💡 Use the photo above to match the row. Enter the number exactly as written (e.g. 1,41,600 → type 141600).
                   </p>
-                  {!allFilled && <p className="text-amber-400/70 text-xs">Enter all values to enable Save.</p>}
+                  {!allFilled && <p className="text-amber-600 dark:text-amber-400/70 text-xs">Enter all values to enable Save.</p>}
                 </div>
               );
             })()}
 
             <div className="flex gap-3">
-              <button onClick={resetToIdle} className="flex-1 bg-slate-800 hover:bg-slate-700 text-white py-3 rounded-xl font-medium transition-colors">Retake Photo</button>
+              <button onClick={resetToIdle} className="flex-1 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-900 dark:text-white py-3 rounded-xl font-medium transition-colors">Retake Photo</button>
               <button
                 onClick={() => handleConfirm()}
                 disabled={!findMissingTowerTotals(confirmPayload.extraction).every(m => {
                   const v = manualTotals[m.key]?.replace(/[, ]/g, '');
                   return v && Number(v) > 0;
                 })}
-                className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:cursor-not-allowed text-white py-3 rounded-xl font-semibold transition-colors"
+                className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-200 dark:disabled:bg-slate-700 disabled:cursor-not-allowed text-white disabled:text-slate-400 py-3 rounded-xl font-semibold transition-colors"
               >
                 Confirm &amp; Save
               </button>
@@ -1267,9 +1270,9 @@ export default function UploadPage() {
               Upload Sheet
             </button>
             <p className="text-slate-400 dark:text-slate-500 text-xs text-center">No login needed. AI reads the date automatically.</p>
-            <div className="border-t border-slate-800 pt-4 text-center">
-              <p className="text-slate-500 text-xs mb-2">Prefer to enter data manually?</p>
-              <Link href="/upload/logbook" className="inline-block text-sm text-blue-400 hover:text-blue-300 border border-blue-800 hover:border-blue-600 rounded-lg px-4 py-2 transition-colors">
+            <div className="border-t border-slate-200 dark:border-slate-800 pt-4 text-center">
+              <p className="text-slate-500 dark:text-slate-500 text-xs mb-2">Prefer to enter data manually?</p>
+              <Link href="/upload/logbook" className="inline-block text-sm text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 border border-blue-300 dark:border-blue-800 hover:border-blue-400 dark:hover:border-blue-600 rounded-lg px-4 py-2 transition-colors">
                 Open Log Book Entry Form →
               </Link>
             </div>
