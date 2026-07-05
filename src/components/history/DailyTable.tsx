@@ -17,17 +17,21 @@ function numFmt(n: number | null | undefined): string {
   return n.toLocaleString('en-IN');
 }
 
+// Tapping the badge bubbles up to the row's onClick and expands the row, where
+// the full detail is already shown (see the amber block below the tables) —
+// so this works on touch without relying on a hover-only `title=` attribute.
+// `aria-label` keeps the full text available to screen readers too.
 function FlagBadge({ flag }: { flag: Flag }) {
   if (flag.type === 'ok') {
     return (
-      <span title={flag.detail} className="inline-block px-2 py-0.5 rounded text-xs font-semibold bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/60 cursor-help">
+      <span aria-label={flag.detail} className="inline-block px-2 py-0.5 rounded text-xs font-semibold bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/60 cursor-pointer">
         ✓ OK
       </span>
     );
   }
   return (
-    <span title={flag.detail}
-      className={`inline-block px-2 py-0.5 rounded text-xs font-semibold cursor-help border ${
+    <span aria-label={flag.detail}
+      className={`inline-block px-2 py-0.5 rounded text-xs font-semibold cursor-pointer border ${
         flag.type === 'digit_drop' || flag.type === 'source_duplication'
           ? 'bg-red-50 dark:bg-red-900/40 text-red-600 dark:text-red-300 border-red-200 dark:border-red-800/60'
           : flag.type === 'summary_misread'
@@ -39,17 +43,34 @@ function FlagBadge({ flag }: { flag: Flag }) {
   );
 }
 
+// Tap-to-toggle so the confidence % is reachable on touch devices, not just
+// via hover title= (P1-5). stopPropagation keeps the tap from also toggling
+// the parent row open/closed.
 function ConfValue({ value, confidence, formatter = numFmt }: {
   value: number | null | undefined;
   confidence: number | null | undefined;
   formatter?: (n: number | null | undefined) => string;
 }) {
+  const [show, setShow] = useState(false);
   const low = confidence != null && confidence < 0.8;
+  if (confidence == null) return <span>{formatter(value)}</span>;
   return (
-    <span title={confidence != null ? `Confidence: ${(confidence * 100).toFixed(0)}%` : undefined}
-      className={low ? 'italic opacity-50 cursor-help' : ''}>
-      {formatter(value)}
-      {low && <sup className="ml-0.5 text-amber-500 text-[9px]">⚠</sup>}
+    <span className="inline-block text-right">
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setShow((s) => !s); }}
+        aria-expanded={show}
+        aria-label={`${formatter(value)}${low ? ` — confidence ${(confidence * 100).toFixed(0)}%, tap for details` : ''}`}
+        className={`${low ? 'italic opacity-50' : ''} ${low ? 'cursor-pointer' : 'cursor-default'}`}
+      >
+        {formatter(value)}
+        {low && <sup className="ml-0.5 text-amber-500 text-[9px]">⚠</sup>}
+      </button>
+      {show && low && (
+        <span className="block text-[10px] font-normal not-italic opacity-100 text-amber-600 dark:text-amber-400 whitespace-nowrap">
+          Confidence: {(confidence * 100).toFixed(0)}%
+        </span>
+      )}
     </span>
   );
 }
