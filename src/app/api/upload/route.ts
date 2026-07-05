@@ -6,8 +6,19 @@ import { extractTextWithOcrSpace } from '@/lib/ocrSpace';
 import { extractTowerTotalsWithQwen } from '@/lib/qwenVision';
 import { extractTextWithMistralOcr } from '@/lib/mistralOcr';
 import { validateExtraction } from '@/lib/extractionValidator';
+import { getISTDateString } from '@/lib/utils';
 
 const DATE_CONFIDENCE_THRESHOLD = 0.8;
+
+// Kept in sync with /api/upload/stream/route.ts — see that file for the full
+// explanation of the 2026-07-05 date-misread incident this guards against.
+const PLAUSIBLE_DATE_WINDOW_DAYS = 5;
+
+function daysBetweenDateStrings(a: string, b: string): number {
+  const da = new Date(a + 'T00:00:00Z').getTime();
+  const db = new Date(b + 'T00:00:00Z').getTime();
+  return Math.round(Math.abs(da - db) / 86_400_000);
+}
 
 export async function POST(request: NextRequest) {
   const supabase = createServerClient();
@@ -87,6 +98,36 @@ export async function POST(request: NextRequest) {
     if (validation.visionDate !== null && originalDateConfidence < DATE_CONFIDENCE_THRESHOLD) {
       extracted.date = validation.visionDate;
     }
+
+    // Date plausibility check — see stream/route.ts for full rationale.
+    if (extracted.date) {
+      const todayIST = getISTDateString();
+      const daysFromToday = daysBetweenDateStrings(extracted.date, todayIST);
+      const { data: recentSheet } = await supabase
+        .from('daily_sheets')
+        .select('date')
+        .eq('processed_status', 'processed')
+        .eq('superseded', false)
+        .order('date', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const lastSheetDate = recentSheet?.date ?? null;
+      const daysFromLastSheet = lastSheetDate ? daysBetweenDateStrings(extracted.date, lastSheetDate) : null;
+
+      const implausible =
+        daysFromToday > PLAUSIBLE_DATE_WINDOW_DAYS &&
+        (daysFromLastSheet === null || daysFromLastSheet > PLAUSIBLE_DATE_WINDOW_DAYS);
+
+      if (implausible) {
+        console.warn(`[upload] Date implausible — ${extracted.date} is ${daysFromToday}d from today (${todayIST})`);
+        extracted.date_confidence = Math.min(extracted.date_confidence ?? 0, 0.5);
+        extracted.flagged_fields = [
+          ...extracted.flagged_fields,
+          `date_implausible:${daysFromToday}d_from_today`,
+        ];
+      }
+    }
+
     visionValidated = visionResult.words.length > 0 || (ocrSpaceResult?.words.length ?? 0) > 0;
     console.log(`[upload] OCR sources active: ${validation.ocrSources.join(', ') || 'none'}`);
   } catch (err) {
