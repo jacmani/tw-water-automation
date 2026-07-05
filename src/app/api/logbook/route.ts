@@ -8,6 +8,54 @@ function n(v: unknown): number | null {
   return isNaN(x) ? null : x;
 }
 
+// ── GET /api/logbook?date=YYYY-MM-DD ────────────────────────────────────────
+// Used by the entry form to hydrate an existing day's data (the "Edit this
+// entry" deep-link from /logbook) and to pull the previous day's cumulative
+// figures for the monotonicity check. Without this endpoint the edit link was
+// a data-loss trap: the form rendered empty and re-submitting blanked the
+// existing entry (P1-6).
+export async function GET(request: NextRequest) {
+  const supabase = createServerClient();
+  const date = request.nextUrl.searchParams.get('date');
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return NextResponse.json({ error: 'Invalid or missing date query param' }, { status: 400 });
+  }
+
+  const [
+    { data: log },
+    { data: towers },
+    { data: sources },
+    { data: amenities },
+    { data: levels },
+    { data: util },
+    { data: inflow },
+  ] = await Promise.all([
+    supabase.from('daily_log').select('*').eq('log_date', date).maybeSingle(),
+    supabase.from('tower_meter_readings').select('*').eq('log_date', date),
+    supabase.from('input_source_readings').select('*').eq('log_date', date),
+    supabase.from('amenity_meter_readings').select('*').eq('log_date', date),
+    supabase.from('water_level_readings').select('*').eq('log_date', date),
+    supabase.from('utility_meter_readings').select('*').eq('log_date', date).maybeSingle(),
+    supabase.from('daily_inflow_summary').select('*').eq('log_date', date).maybeSingle(),
+  ]);
+
+  if (!log) {
+    return NextResponse.json({ found: false, log_date: date });
+  }
+
+  return NextResponse.json({
+    found: true,
+    log_date: date,
+    log,
+    towers: towers ?? [],
+    sources: sources ?? [],
+    amenities: amenities ?? [],
+    levels: levels ?? [],
+    util: util ?? null,
+    inflow: inflow ?? null,
+  });
+}
+
 export async function POST(request: NextRequest) {
   const supabase = createServerClient();
 
