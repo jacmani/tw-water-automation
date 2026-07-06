@@ -118,6 +118,15 @@ CRITICAL HANDWRITING DISAMBIGUATION — these digit pairs are frequently confuse
   • 0 vs 1 vs 9: in tightly-spaced digit strings, trailing "0"s and "1"s bleed into
     each other. Re-read each digit of a DR total individually rather than as a
     single glance — DR totals are only 5 digits and errors compound easily.
+  • 3 vs 9: a handwritten "3" whose top curve doesn't fully open can look like a "9",
+    and a "9" whose descender is short/straight can look like a "3". This is
+    especially high-risk on the LEADING digit of a lakhs-format number in Section 6
+    (TOTAL INFLOW) — misreading just that one digit swings the value by 600,000 L
+    (e.g. "3,62,000" misread as "9,62,000"). Always double-check the leading digit
+    of water_inflow/well_inflow/tanker_inflow/input_total/tower_usage against the
+    row's own arithmetic: TOTAL COLLECTION − TOTAL USAGE should equal the printed
+    BALANCE. If your reading doesn't reconcile with the sheet's own BALANCE figure,
+    re-examine the leading digit before finalizing.
   • DR totals in this complex are almost always in the 5,000–40,000 range. If your
     first read of a DR total starts with 5, 8, or 9, treat that as a strong signal
     to re-examine whether the true leading digit is smaller (1, 2, or 3) before
@@ -357,6 +366,49 @@ const TOWER_USAGE_MAX = 800_000;
 // auto-correction source exists for this field either).
 const SOURCE_TOTAL_MIN = 20_000;
 const SOURCE_TOTAL_MAX = 400_000;
+
+// Substrings that mark a flagged_fields entry as coming from a checkSanity /
+// enforceHardCeilings violation, as opposed to an extractionValidator.ts note
+// (e.g. "unverified_number:", "date_mismatch:") which uses different wording.
+const SANITY_FLAG_MARKERS = [
+  'outside expected range',
+  'disagrees with',
+  'inconsistent with',
+  'FINAL_CLAMP',
+  'NULLED',
+  'auto-corrected',
+  'sanity_violation',
+  'manual verification',
+  'manual review',
+  'manual_review',
+];
+
+/**
+ * Incident (2026-07-05 sheet): summary.input_total was misread 362,000 → 962,000
+ * (leading lakhs digit "3" read as "9" — a confusion pair not previously called out
+ * in the disambiguation guidance). checkSanity() correctly flagged it (962,000 >
+ * the 900,000 documented ceiling) and the escalation path is designed to cap
+ * overall_confidence low when a summary-section violation can't be auto-corrected —
+ * but both upload routes call validateExtraction() AFTERWARDS and unconditionally
+ * ADD its OCR-corroboration confidenceBoost on top, with no ceiling tied to the
+ * violation. Generic word-level OCR (Google Vision / OCR.space) reads the SAME
+ * ambiguous handwriting and often "corroborates" the very same wrong digit string,
+ * so the boost pushed confidence from a sanity-capped ~0.55 back up past 0.80 —
+ * silently erasing the exact warning checkSanity exists to raise. This sheet
+ * reached the dashboard at 90% confidence carrying a 600,000 L error.
+ *
+ * Fix: once ANY sanity-violation flag is present on the result, corroboration may
+ * still nudge confidence around but can never cross this ceiling — a violated
+ * internal-consistency check must always outrank "OCR agrees with itself," since
+ * the OCR sources are reading the same misleading pixels, not an independent truth.
+ */
+export const SANITY_CONFIDENCE_CEILING = 0.6;
+
+/** Used by both upload routes — see SANITY_CONFIDENCE_CEILING doc comment above. */
+export function hasSanityViolationFlag(flags: string[] | undefined): boolean {
+  if (!flags || flags.length === 0) return false;
+  return flags.some(f => SANITY_FLAG_MARKERS.some(marker => f.includes(marker)));
+}
 
 interface SanityReport {
   violated: boolean;

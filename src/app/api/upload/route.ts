@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
-import { extractSheetData } from '@/lib/anthropic';
+import { extractSheetData, hasSanityViolationFlag, SANITY_CONFIDENCE_CEILING } from '@/lib/anthropic';
 import { extractTextFromImage } from '@/lib/googleVision';
 import { extractTextWithOcrSpace } from '@/lib/ocrSpace';
 import { extractTowerTotalsWithQwen } from '@/lib/qwenVision';
@@ -89,7 +89,13 @@ export async function POST(request: NextRequest) {
     extracted = claudeResult;
 
     const validation = validateExtraction(extracted, visionResult, ocrSpaceResult);
-    extracted.overall_confidence = Math.max(0, Math.min(1, extracted.overall_confidence + validation.confidenceBoost));
+    // See SANITY_CONFIDENCE_CEILING doc comment in anthropic.ts (2026-07-05 incident) —
+    // mirrors the fix in stream/route.ts.
+    const sanityViolated = hasSanityViolationFlag(extracted.flagged_fields);
+    const boostedConfidence = Math.max(0, Math.min(1, extracted.overall_confidence + validation.confidenceBoost));
+    extracted.overall_confidence = sanityViolated
+      ? Math.min(boostedConfidence, SANITY_CONFIDENCE_CEILING)
+      : boostedConfidence;
     extracted.flagged_fields = [...extracted.flagged_fields, ...validation.flags];
     const originalDateConfidence = extracted.date_confidence;
     if (validation.dateMismatch) {

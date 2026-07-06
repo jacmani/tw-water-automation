@@ -8,7 +8,7 @@
  */
 import { NextRequest } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
-import { extractSheetData } from '@/lib/anthropic';
+import { extractSheetData, hasSanityViolationFlag, SANITY_CONFIDENCE_CEILING } from '@/lib/anthropic';
 import { extractTextFromImage } from '@/lib/googleVision';
 import { extractTextWithOcrSpace } from '@/lib/ocrSpace';
 import { extractTowerTotalsWithQwen } from '@/lib/qwenVision';
@@ -231,7 +231,16 @@ export async function POST(request: NextRequest) {
           ocrSpaceResult,
           mistralOcrResult.success ? mistralOcrResult.markdown : undefined
         );
-        extracted.overall_confidence = Math.min(1, Math.max(0, extracted.overall_confidence + validation.confidenceBoost));
+        // See SANITY_CONFIDENCE_CEILING doc comment in anthropic.ts (2026-07-05 incident):
+        // the OCR-corroboration boost below must never be allowed to erase a checkSanity
+        // violation — generic OCR reads the same ambiguous handwriting and will happily
+        // "corroborate" the very digit that's wrong. Check flags BEFORE appending
+        // validation.flags (which use different wording and would never match anyway).
+        const sanityViolated = hasSanityViolationFlag(extracted.flagged_fields);
+        const boostedConfidence = Math.min(1, Math.max(0, extracted.overall_confidence + validation.confidenceBoost));
+        extracted.overall_confidence = sanityViolated
+          ? Math.min(boostedConfidence, SANITY_CONFIDENCE_CEILING)
+          : boostedConfidence;
         extracted.flagged_fields = [...(extracted.flagged_fields ?? []), ...validation.flags];
 
         if (validation.corroboratedNumbers > 0) {
