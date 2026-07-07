@@ -172,6 +172,10 @@ export interface ExtractionResult {
   date_confidence: number;
   overall_confidence: number;
   tower_section: Record<TowerName, { DO: TowerMeterData; DR: TowerMeterData }>;
+  // The sheet's own printed grand-total row below all 8 tower rows (Section 1) —
+  // NOT persisted to any DB table, used transiently as a checkSanity cross-check
+  // against SUM(all 8 total_ltrs values). See anthropic.ts checkSanity().
+  tower_section_total?: { yesterday: number | null; today: number | null; diff: number | null } | null;
   water_sources: WaterSourceData[];
   water_levels: WaterLevelData[];
   amenities: AmenityData[];

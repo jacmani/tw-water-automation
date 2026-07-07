@@ -32,6 +32,18 @@ Columns left to right:
   Volume Today (Ltrs) — Today volume
   Diff — Difference
 
+Below all 8 rows (Venus/Mercury/Neptune/Jupiter × DO/DR) there is a printed "TOTAL" row
+that sums the Volume Yesterday / Volume Today / Diff columns across all 8 rows for the
+whole complex — this is a SEPARATE grand-total row, not one more tower row. Read it into
+tower_section_total: {yesterday, today, diff}. This is the single most reliable
+cross-check available for this section — the technician has already added up all 8 rows
+themselves, so SUM(all 8 total_ltrs values) should reconcile with tower_section_total.today.
+If your own sum of the 8 total_ltrs values doesn't land close to the printed TOTAL row,
+one of your 8 individual readings is almost certainly wrong — re-examine each one
+(this is exactly how a single misread "Total Litres" cell, e.g. "1,23,000" misread as
+"1,83,000" via the 2-vs-8 confusion above, was caught in production: the printed TOTAL
+row said 650,000 but the 8 individual cells summed to 710,000).
+
 === SECTION 2: SOURCE/LOCATION SECTION ===
 Rows (read in this order — these match the PRINTED labels on the sheet):
   Mercury + Venus Tanker, Jupiter + Neptune Tanker, Venus Side Well 1 2 3, Venus Side Well 4,
@@ -203,6 +215,7 @@ Return ONLY a valid JSON object — no markdown, no explanation. Use null for bl
       "DR": {"r_yesterday": null, "r_today": null, "total_ltrs": null, "vol_yesterday": null, "vol_today": null, "diff": null, "confidence": 0.0}
     }
   },
+  "tower_section_total": {"yesterday": null, "today": null, "diff": null},
   "water_sources": [
     {"location": "Mercury + Venus Tanker",  "r_yesterday": null, "r_today": null, "yesterday_ltrs": null, "today_ltrs": null, "total": null, "confidence": 0.0},
     {"location": "Jupiter + Neptune Tanker","r_yesterday": null, "r_today": null, "yesterday_ltrs": null, "today_ltrs": null, "total": null, "confidence": 0.0},
@@ -592,6 +605,53 @@ export function checkSanity(
         // plausibility floor/ceiling is enforced; null it if nothing is plausible.
         const c = deriveCorrection(t.DO!, DO_CEILING, DO_FLOOR, independentDO, DO_EXPECTED_MAX);
         corrections.push({ tower, type: 'DO', correctedTotal: c.value, source: c.source });
+      }
+    }
+  }
+
+  // ── Tower-section aggregate cross-check ─────────────────────────────────────
+  // Documented invariant (CLAUDE.md): "Tower Usage [Section 6] should approximately
+  // match total from Tower Section. A large Diff flags an anomaly" — this was
+  // documented but never actually implemented in code. Incident (2026-07-06 sheet):
+  // Venus DO and Mercury DO were each misread by ~60-66k L (the classic "1,23,000"
+  // vs "1,83,000" 2-vs-8 digit confusion already called out above), inflating the
+  // 8-row sum to 710,000 while the sheet's own printed Section 1 TOTAL row said
+  // 650,000 — nothing compared the sum against any reference, so the error reached
+  // the dashboard's "Community Total" undetected at high confidence. No
+  // auto-correction here (same reasoning as Section 6: we don't know WHICH of the
+  // 8 cells is wrong from this check alone) — flag + force manual review.
+  const towerLtrsSum = (['Venus', 'Mercury', 'Neptune', 'Jupiter'] as const).reduce((sum, tw) => {
+    const t = towers[tw];
+    return sum + (t?.DO?.total_ltrs ?? 0) + (t?.DR?.total_ltrs ?? 0);
+  }, 0);
+
+  if (towerLtrsSum > 0) {
+    // Cross-check against the sheet's own printed Section 1 TOTAL row, if captured.
+    const sectionTotal = result.tower_section_total?.today;
+    if (sectionTotal != null && sectionTotal > 0) {
+      const ratio = Math.min(towerLtrsSum, sectionTotal) / Math.max(towerLtrsSum, sectionTotal);
+      if (ratio < 0.92) {
+        console.warn(`[sanity] SUM(tower total_ltrs)=${towerLtrsSum} vs printed Section 1 TOTAL row=${sectionTotal} ratio=${ratio.toFixed(2)}`);
+        violated = true;
+        result.flagged_fields = [
+          ...(result.flagged_fields ?? []),
+          `tower_section: SUM(all 8 total_ltrs)=${towerLtrsSum} disagrees with the sheet's own printed TOTAL row=${sectionTotal} — one of the 8 individual readings is likely misread, needs manual verification`,
+        ];
+      }
+    }
+
+    // Cross-check against summary.tower_usage (Section 6's own "TOTAL USAGE" figure) —
+    // documented in CLAUDE.md as an invariant, now actually enforced.
+    const usageTotal = result.summary?.tower_usage;
+    if (usageTotal != null && usageTotal > 0) {
+      const ratio = Math.min(towerLtrsSum, usageTotal) / Math.max(towerLtrsSum, usageTotal);
+      if (ratio < 0.85) {
+        console.warn(`[sanity] SUM(tower total_ltrs)=${towerLtrsSum} vs summary.tower_usage=${usageTotal} ratio=${ratio.toFixed(2)}`);
+        violated = true;
+        result.flagged_fields = [
+          ...(result.flagged_fields ?? []),
+          `tower_section: SUM(all 8 total_ltrs)=${towerLtrsSum} disagrees with summary.tower_usage=${usageTotal} — needs manual verification`,
+        ];
       }
     }
   }
