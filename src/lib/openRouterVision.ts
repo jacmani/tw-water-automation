@@ -1,22 +1,41 @@
 /**
- * OpenRouter FREE vision model — tower-totals tie-breaker.
+ * OpenRouter FREE vision models — tower/source/summary tie-breaker.
  *
- * Role: a free SECOND OPINION used only when the primary (Gemini) and Qwen3-VL
- * disagree on tower totals. Reads the same 8 tower totals so its output can be
- * compared field-by-field against the other two free engines. If 2 of the 3 free
- * engines agree on a disputed value, we accept it WITHOUT paying for Claude.
+ * Role: a free SECOND (and third-vs-Qwen) OPINION used only when the primary
+ * (Gemini) and the HF parallel validator (qwenVision.ts) disagree. Reads the
+ * same tower/source/summary fields so its output can be compared field-by-field.
+ * If 2 of the 3 free engines agree on a disputed value, we accept it WITHOUT
+ * paying for Claude.
  *
  * This is the middle rung of the cost-inverted waterfall:
- *   Gemini (free) + Qwen (free)  →  OpenRouter (free)  →  Claude Haiku (paid, last resort)
+ *   Gemini (free) + HF validator (free)  →  OpenRouter (free)  →  Claude Haiku (paid, last resort)
+ *
+ * v3.3 (docs/ocr-audit-2026-07.md, "go through everything in OpenRouter" pass,
+ * 2026-07-08): queried OpenRouter's live catalog directly —
+ * `GET https://openrouter.ai/api/v1/models`, filtered to entries whose id ends
+ * in `:free` AND whose `architecture.input_modalities` includes `"image"`.
+ * That is EVERY free vision-capable model OpenRouter currently lists — not a
+ * guess from a blog post. Found 5: two Gemma 4 variants (the well-established
+ * ones, each independently confirmed to have a dozen+ live serving endpoints
+ * under their paid slugs — strong evidence of real infra behind them), an
+ * NVIDIA Nemotron omni-modal reasoning model, a smaller NVIDIA Nemotron model
+ * specifically described as built for "document intelligence" (a good
+ * conceptual fit for this task despite being the smallest of the four), and
+ * one pure content-safety/moderation classifier (excluded — wrong tool for
+ * structured JSON extraction). Also added OpenRouter's own
+ * `openrouter/free` meta-router (picks a live free model for you) as a final
+ * catch-all, since it costs nothing extra to try before falling to paid Haiku.
  *
  * Why OpenRouter only as a tie-breaker (not primary):
  * - Free tier is ~20 RPM and 50 req/day (1,000/day after a one-time $10), and the
- *   free-model roster rotates. Fine for occasional tie-breaking; riskier as a daily
- *   workhorse. Using it only on disagreement means rotation/downtime rarely bites.
+ *   free-model roster rotates — hard, and apparently faster than expected: this
+ *   file's roster from just two OCR-audit sessions ago already needed replacing.
+ *   Fine for occasional tie-breaking; riskier as a daily workhorse.
  * - OpenAI-compatible API → same fetch shape as qwenVision.ts.
  *
- * Default model: qwen/qwen2.5-vl-32b-instruct:free (strong doc/OCR VLM, image input).
- * Override with OPENROUTER_MODEL. Skips gracefully if OPENROUTER_API_KEY is unset.
+ * Override the whole roster with OPENROUTER_MODEL (tried first). Skips
+ * gracefully if OPENROUTER_API_KEY is unset. Re-verify this list periodically
+ * the same way — see the query above, or `scripts/check-openrouter-roster.ts`.
  */
 
 export interface OpenRouterTowerReading {
@@ -63,9 +82,11 @@ const SOURCE_KEY_MAP: Record<string, string> = {
 // docs/ocr-audit-2026-07.md P0-2).
 const MODEL_CANDIDATES = [
   process.env.OPENROUTER_MODEL,
-  'google/gemma-4-31b-it:free',                        // Gemma 4 vision, free
-  'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', // text+image+video+audio, free
-  'google/gemma-4-26b-a4b-it:free',                     // Gemma 4 MoE vision variant, free
+  'google/gemma-4-31b-it:free',                          // dense 30.7B, 256K ctx — most broadly hosted (13 live endpoints on the paid slug)
+  'google/gemma-4-26b-a4b-it:free',                       // MoE, ~31B quality at 3.8B active/token — same family, good 2nd opinion
+  'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free',   // 30B omni (text+image+video+audio), reasoning-tuned
+  'nvidia/nemotron-nano-12b-v2-vl:free',                  // smaller (12B) but purpose-built for document intelligence
+  'openrouter/free',                                      // meta-router: OpenRouter picks a live free model for you — last resort
 ].filter(Boolean) as string[];
 
 const EMPTY_RESULT: OpenRouterVisionResult = {
@@ -152,6 +173,12 @@ export async function extractTowerTotalsWithOpenRouter(
 
   // Try each candidate model until one responds. 404 (dead slug) / 400 → try next.
   // Each attempt has a 20s timeout — OpenRouter can hang on slow free models.
+  // NOTE: worst case (every candidate dead/hanging) is now ~5x20s=100s instead of
+  // the old 3x20s=60s, since the roster grew from 3 to 5 real candidates. That's a
+  // deliberate trade — this call only runs on the agreement-gate-failure path (not
+  // every upload), and surviving a dead model matters more than shaving the rare
+  // all-dead worst case. Revisit if that path is ever observed hitting a real
+  // function-duration ceiling in production logs.
   for (const model of MODEL_CANDIDATES) {
     console.log(`[openrouter] Trying ${model} (free tie-breaker)`);
     const ac = new AbortController();
