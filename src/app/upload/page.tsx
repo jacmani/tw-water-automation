@@ -1023,7 +1023,22 @@ export default function UploadPage() {
     setStatus('compressing');
     let imageToUpload = file;
     try {
-      imageToUpload = await imageCompression(file, { maxSizeMB: 2, maxWidthOrHeight: 1920, useWebWorker: true });
+      // Raised from 1920px/2MB (docs/ocr-audit-2026-07.md P2-1): every vision engine in
+      // the pipeline was working from a resolution-halved photo before ever seeing it —
+      // a 12MP phone photo (~4032px long edge) was being downscaled to 1920px client-side,
+      // then handed to five OCR engines whose whole job is reading small handwritten
+      // digits. Two real constraints bound how far this can go:
+      //   - Claude (Haiku) auto-downscales any image to 1568px on the longest edge
+      //     server-side regardless of what's sent — so this bump doesn't help Haiku's
+      //     full-sheet read specifically (see the targeted-crop escalation path instead,
+      //     which zooms a region INTO that same 1568px budget for higher effective DPI).
+      //     It DOES help Gemini, Qwen3-VL, and the OpenRouter tie-breaker, which are not
+      //     bound by that same 1568px ceiling.
+      //   - Vercel serverless functions hard-cap the request body at 4.5MB (Hobby plan
+      //     included) — /api/upload and /api/upload/stream will 413 above that. 3.5MB
+      //     leaves ~1MB of headroom for multipart/FormData overhead; do not raise this
+      //     further without also checking that ceiling.
+      imageToUpload = await imageCompression(file, { maxSizeMB: 3.5, maxWidthOrHeight: 3000, useWebWorker: true });
     } catch { /* use original */ }
 
     setStatus('extracting');

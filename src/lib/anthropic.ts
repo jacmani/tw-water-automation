@@ -298,7 +298,8 @@ export async function runExtraction(
   base64Image: string,
   mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
   model: string,
-  ocrTranscript?: string
+  ocrTranscript?: string,
+  extraImages?: CroppedImage[]
 ): Promise<{ result: ExtractionResult; usage: ClaudeUsage | undefined }> {
   // Build messages array — image always first, OCR transcript appended if available.
   // The transcript gives Haiku a structured text reference to resolve digit ambiguities.
@@ -313,7 +314,18 @@ export async function runExtraction(
     text: `\n\n--- MISTRAL OCR TRANSCRIPT (purpose-built handwriting OCR, high accuracy) ---\nUse this as a reference to resolve any digit ambiguities you see in the image above.\nIf a number in the image is unclear, prefer the value shown in this transcript.\nHowever, the transcript may have table alignment errors — always verify against the image.\n\n${ocrTranscript}\n--- END TRANSCRIPT ---`,
   } : null;
 
-  const userContent = textBlock ? [imageBlock, textBlock] : [imageBlock];
+  // Targeted zoom crops (docs/ocr-audit-2026-07.md P2-1) — only ever passed by the
+  // paid escalation call site below, on top of (never instead of) the full-sheet
+  // image. Claude auto-downscales any image to 1568px on its longest edge, so a
+  // crop of just the disputed region gives it meaningfully higher effective
+  // magnification on that region than the full sheet ever could, within the same
+  // token/resolution budget.
+  const cropBlocks = (extraImages ?? []).flatMap(crop => [
+    { type: 'text' as const, text: `\n\n--- ${crop.label} ---` },
+    { type: 'image' as const, source: { type: 'base64' as const, media_type: crop.mediaType, data: crop.base64 } },
+  ]);
+
+  const userContent = [imageBlock, ...(textBlock ? [textBlock] : []), ...cropBlocks];
 
   const response = await anthropic.beta.promptCaching.messages.create({
     model,
@@ -747,6 +759,36 @@ export function checkSanity(
     }
   }
 
+  // ── Sections 3-5 (Water Levels, Amenities/Party Hall) — flag-only ───────────
+  // docs/ocr-audit-2026-07.md P1-1: these sections have ZERO cross-validation —
+  // no Qwen, no OpenRouter, no independent reading exists to correct from (unlike
+  // Section 2 above, which now gets a real free tie-breaker after the P0-3 fix).
+  // Deliberately do NOT set violated=true here: that would force a paid Haiku
+  // escalation call for the whole sheet with no better ability to read these
+  // specific cells than the primary engine already had — no crop, no second
+  // reader — so it would spend money without a reliable fix path. This only
+  // makes an existing blind spot visible in flagged_fields/the history page's
+  // review queue, which is the cheap, honest version of closing this gap.
+  for (const wl of result.water_levels ?? []) {
+    if (wl.percentage != null && (wl.percentage < 0 || wl.percentage > 100)) {
+      console.warn(`[sanity] water_levels[${wl.tank} ${wl.time_slot}].percentage=${wl.percentage} outside 0-100 — likely cm_reading/percentage swapped`);
+      result.flagged_fields = [
+        ...(result.flagged_fields ?? []),
+        `water_levels_${wl.tank}_${wl.time_slot}_percentage: ${wl.percentage} outside 0-100 range — cm_reading/percentage may be swapped, needs manual verification`,
+      ];
+    }
+  }
+
+  for (const am of result.amenities ?? []) {
+    if (am.diff != null && am.diff < 0) {
+      console.warn(`[sanity] amenities["${am.section}"/"${am.meter_name}"].diff=${am.diff} is negative`);
+      result.flagged_fields = [
+        ...(result.flagged_fields ?? []),
+        `amenities_${am.section}_${am.meter_name}_diff: ${am.diff} is negative — meter reading may have been misread, swapped with yesterday's value, or the meter was reset, needs manual verification`,
+      ];
+    }
+  }
+
   return { violated, corrections };
 }
 
@@ -823,6 +865,7 @@ import type { MistralOcrResult } from './mistralOcr';
 import { extractSheetWithGemini } from './geminiVision';
 import { extractTowerTotalsWithOpenRouter, type OpenRouterVisionResult } from './openRouterVision';
 import { CostTracker } from './costTracker';
+import { cropRegions, type CropRegion, type CroppedImage } from './imageCrop';
 
 /** Real-time progress callback passed from the SSE stream route into the extraction pipeline. */
 export type ExtractionProgressFn = (
@@ -1303,10 +1346,32 @@ async function extractSheetDataInner(
   }
 
   // ── Phase 2.4: PAID escalation to Claude Haiku (last resort — NO Opus) ───────
+  // Targeted zoom crops (docs/ocr-audit-2026-07.md P2-1) — pick which generous
+  // region(s) of the sheet to crop at full resolution based on WHICH check(s)
+  // actually triggered this escalation, so Haiku gets a genuinely higher-DPI look
+  // at the part of the sheet that's actually in dispute (see imageCrop.ts for why
+  // this specifically helps Haiku, which auto-downscales the full image regardless
+  // of what's sent). Falls back to top+bottom (the two sections with the worst
+  // documented incident history) when escalation was triggered by something
+  // sheet-wide (low_confidence, or a sanity check with no section-specific signal)
+  // rather than a disagreement/correction attributable to one section.
+  const cropSet = new Set<CropRegion>();
+  if (qwenTowerDisagreements.length > 0 || sanity.corrections.length > 0) cropSet.add('top');
+  if (qwenSourceDisagreements.length > 0) cropSet.add('middle');
+  if (qwenSummaryDisagreements.length > 0) cropSet.add('bottom');
+  if (cropSet.size === 0) {
+    cropSet.add('top');
+    cropSet.add('bottom');
+  }
+  const crops = await cropRegions(base64Image, mediaType, Array.from(cropSet));
+  if (crops.length > 0) {
+    progress?.('info', `Zooming into ${crops.length} region(s) for Haiku`, Array.from(cropSet).join(', '));
+  }
+
   console.log('[extraction] Escalating to Claude Haiku (paid, last resort)');
   progress?.('warn', 'Escalating to Claude Haiku (paid, last resort)…', '1 paid call — ~₹0.25');
   const t0 = Date.now();
-  const { result: haikuResult, usage: haikuEscalationUsage } = await runExtraction(base64Image, mediaType, HAIKU_MODEL, ocrTranscript);
+  const { result: haikuResult, usage: haikuEscalationUsage } = await runExtraction(base64Image, mediaType, HAIKU_MODEL, ocrTranscript, crops);
   const haikuMs = Date.now() - t0;
   cost?.addClaude('Claude Haiku (escalation)', haikuEscalationUsage);
   console.log(`[extraction] Haiku escalation confidence=${haikuResult.overall_confidence}`);
