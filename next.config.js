@@ -8,11 +8,9 @@ const nextConfig = {
       },
     ],
   },
-  api: {
-    bodyParser: {
-      sizeLimit: '10mb',
-    },
-  },
+  // `api.bodyParser` was a Pages-Router-only option (App Router route handlers don't
+  // read it at all — this repo has never used the Pages Router). It did nothing except
+  // print an "Invalid next.config.js options" warning on every single build/dev start.
 };
 
 module.exports = nextConfig;

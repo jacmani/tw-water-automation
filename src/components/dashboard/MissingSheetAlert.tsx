@@ -22,11 +22,11 @@ export default function MissingSheetAlert({ hasSheet }: Props) {
       <div className="flex-1 min-w-0">
         <p className="text-amber-700 dark:text-amber-400 font-semibold text-sm">No sheet uploaded today</p>
         <p className="text-amber-600/80 dark:text-amber-300/70 text-xs mt-0.5">
-          The technician uploads each morning a photo of yesterday&apos;s completed log —
-          that upload should have happened by 10 AM IST. Please ask the technician to upload now.
+          The technician uploads a photo of yesterday&apos;s completed sheet each morning —
+          that should have happened by 10 AM IST. Please ask the technician to upload it now.
         </p>
       </div>
-      <Link href="/upload" className="flex-shrink-0 bg-amber-600 hover:bg-amber-500 dark:bg-amber-700 dark:hover:bg-amber-600 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors">
+      <Link href="/upload" className="flex-shrink-0 bg-amber-600 hover:bg-amber-500 dark:bg-amber-700 dark:hover:bg-amber-600 active:scale-[0.97] text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-all">
         Upload
       </Link>
     </div>

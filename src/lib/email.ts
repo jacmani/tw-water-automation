@@ -180,13 +180,39 @@ export async function sendMonthlyReport(supabase: Supabase, payload: MonthlyRepo
 
 // ─── HTML Templates ──────────────────────────────────────────────────────────
 
-const BASE_CSS = `font-family:system-ui,-apple-system,'Segoe UI',sans-serif;margin:0;padding:0;background:#0F172A;color:#fff;`;
-const CONTAINER = `max-width:600px;margin:0 auto;background:#0F172A;`;
+// Colour/style constants extracted into one object (audit §5 — email.ts previously
+// had 20+ hardcoded hex values scattered through the template functions below).
+const EMAIL_TOKENS = {
+  bg: '#0F172A',
+  bgAlt: '#1E293B',
+  bgFooter: '#0A0F1E',
+  border: '#1E293B',
+  borderStrong: '#334155',
+  text: '#fff',
+  textMuted: '#94A3B8',
+  textFaint: '#64748B',
+  textFooter: '#475569',
+  h2Color: '#E2E8F0',
+  bodyText: '#CBD5E1',
+  red: '#DC2626',
+  redSoft: '#FCA5A5',
+  redBg: '#7F1D1D',
+  green: '#86EFAC',
+  greenBg: 'rgba(22,101,52,0.25)',
+  greenBorder: '#166534',
+  greenText: '#4ADE80',
+  waGreen: '#25D366',
+  blueLink: '#60A5FA',
+  accentHeight: '8px', // audit — was 5px, read as a hairline artifact rather than a deliberate accent
+} as const;
+
+const BASE_CSS = `font-family:system-ui,-apple-system,'Segoe UI',sans-serif;margin:0;padding:0;background:${EMAIL_TOKENS.bg};color:${EMAIL_TOKENS.text};`;
+const CONTAINER = `max-width:600px;margin:0 auto;background:${EMAIL_TOKENS.bg};`;
 const CELL = `padding:24px 32px;`;
-const MUTED = `color:#94A3B8;font-size:13px;`;
-const H2 = `color:#E2E8F0;font-size:22px;font-weight:800;margin:0 0 4px;letter-spacing:-0.5px;`;
-const LABEL = `color:#64748B;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;margin:0 0 4px;`;
-const VALUE_LG = `color:#fff;font-size:28px;font-weight:900;margin:0;letter-spacing:-1px;`;
+const MUTED = `color:${EMAIL_TOKENS.textMuted};font-size:13px;`;
+const H2 = `color:${EMAIL_TOKENS.h2Color};font-size:22px;font-weight:800;margin:0 0 4px;letter-spacing:-0.5px;`;
+const LABEL = `color:${EMAIL_TOKENS.textFaint};font-size:11px;text-transform:uppercase;letter-spacing:0.08em;margin:0 0 4px;`;
+const VALUE_LG = `color:${EMAIL_TOKENS.text};font-size:28px;font-weight:900;margin:0;letter-spacing:-1px;`;
 const DASH_URL = 'https://tw-water-automation.vercel.app';
 
 function fmt(litres: number): string {
@@ -262,16 +288,26 @@ function emailShell(accentColor: string, previewText: string, body: string): str
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="dark light">
   <title>${previewText}</title>
+  <style>
+    /* Emails are dark-styled by design (card + accent bar). In a light-mode email
+       client (e.g. Gmail desktop), the OUTER page background is normally white,
+       which reads as jarring next to a hardcoded-dark card. This lightens just the
+       outer page background in light-mode clients while leaving the card itself —
+       and all its inner text colours — untouched (audit I3). */
+    @media (prefers-color-scheme: light) {
+      .email-outer-bg { background:#E2E8F0 !important; }
+    }
+  </style>
 </head>
 <body style="${BASE_CSS}">
   <span style="display:none;max-height:0;overflow:hidden;">${previewText}</span>
-  <table width="100%" cellpadding="0" cellspacing="0" style="${BASE_CSS}">
+  <table width="100%" cellpadding="0" cellspacing="0" class="email-outer-bg" style="${BASE_CSS}">
     <tr><td>
       <table width="600" align="center" cellpadding="0" cellspacing="0" style="${CONTAINER}border-radius:12px;overflow:hidden;margin-top:24px;margin-bottom:24px;">
         <!-- accent bar -->
-        <tr><td style="background:${accentColor};height:5px;font-size:0;">&nbsp;</td></tr>
+        <tr><td style="background:${accentColor};height:${EMAIL_TOKENS.accentHeight};font-size:0;">&nbsp;</td></tr>
         <!-- TW identity header -->
         <tr><td style="padding:16px 32px;border-bottom:1px solid #1E293B;">
           <table cellpadding="0" cellspacing="0"><tr>
@@ -308,11 +344,17 @@ function spikeAlertHtml({ tower, sheetDate, currentLitres, sevenDayAvg, overageP
   // sheet, which is normally the day BEFORE this alert is sent (technician uploads
   // each morning a sheet covering the previous day's readings).
   const spikeWaUrl = `https://wa.me/?text=${encodeURIComponent(`⚠ Water Alert — ${tower} Tower: ${fmt(currentLitres)} on ${sheetDate} (+${overagePct.toFixed(0)}% above 7-day avg). Please investigate. Full report: ${DASH_URL}`)}`;
+  const overageLitres = fmt(currentLitres - sevenDayAvg);
+  // Audit: "too much red simultaneously" — header used to have a red-tinted
+  // background PLUS a red label PLUS a red H2. Now only the small uppercase label
+  // pill signals urgency; the header background matches every other cell (neutral)
+  // and H2 stays light/white. The red accent bar + red stat pill further down are
+  // enough — the reader shouldn't need a wall of red to know this is urgent.
   const body = `
     <!-- header -->
-    <tr><td style="${CELL}background:rgba(127,29,29,0.30);border-bottom:1px solid #7F1D1D;">
-      <p style="color:#DC2626;font-size:11px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;margin:0 0 6px;">⚠ Water Consumption Alert</p>
-      <h2 style="${H2}">${tower} Tower — Spike Detected</h2>
+    <tr><td style="${CELL}border-bottom:1px solid ${EMAIL_TOKENS.border};">
+      <span style="display:inline-block;background:${EMAIL_TOKENS.redBg};border-radius:20px;padding:4px 12px;color:${EMAIL_TOKENS.redSoft};font-size:11px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;margin:0 0 8px;">⚠ Water Consumption Alert</span>
+      <h2 style="${H2}margin-top:8px;">${tower} Tower — Spike Detected</h2>
       <p style="${MUTED}margin:4px 0 0;">${sheetDate}</p>
     </td></tr>
     <!-- big number -->
@@ -343,14 +385,16 @@ function spikeAlertHtml({ tower, sheetDate, currentLitres, sevenDayAvg, overageP
       </table>
     </td></tr>
     <!-- cta -->
-    <tr><td style="${CELL}background:#1E293B;border-top:1px solid #334155;">
-      <p style="${MUTED}margin:0 0 8px;font-weight:600;">Recommended Actions</p>
-      <p style="color:#94A3B8;font-size:13px;margin:0 0 4px;">• Check all taps and fixtures in ${tower} Tower for running water</p>
-      <p style="color:#94A3B8;font-size:13px;margin:0 0 4px;">• Alert the ${tower} GC Chair to investigate</p>
-      <p style="color:#94A3B8;font-size:13px;margin:0;">• WhatsApp / Call Maintenance: <strong style="color:#60A5FA;">9072624550</strong></p>
+    <tr><td style="${CELL}background:${EMAIL_TOKENS.bgAlt};border-top:1px solid ${EMAIL_TOKENS.borderStrong};border-left:3px solid ${color};">
+      <p style="${MUTED}margin:0 0 8px;font-weight:600;">What to do now</p>
+      <p style="color:${EMAIL_TOKENS.textMuted};font-size:13px;margin:0 0 4px;">• Check all taps and fixtures in ${tower} Tower for running water</p>
+      <p style="color:${EMAIL_TOKENS.textMuted};font-size:13px;margin:0 0 4px;">• Alert the ${tower} GC Chair to investigate</p>
+      <p style="color:${EMAIL_TOKENS.textMuted};font-size:13px;margin:0;">• WhatsApp / Call Maintenance: <a href="tel:9072624550" style="color:${EMAIL_TOKENS.blueLink};font-weight:700;text-decoration:none;">9072624550</a></p>
     </td></tr>
     ${ctaSection(spikeWaUrl, true)}`;
-  return emailShell(color, `⚠ Water Alert: ${tower} Tower +${overagePct.toFixed(0)}%`, body);
+  // Preheader is now specific to this incident (audit — was just repeating the
+  // subject line), so the inbox preview line itself is useful information.
+  return emailShell(color, `${tower} used ${overageLitres} more than usual on ${sheetDate} — check for leaks or open taps`, body);
 }
 
 function weeklyReportHtml(p: WeeklyReportPayload): string {
@@ -360,8 +404,8 @@ function weeklyReportHtml(p: WeeklyReportPayload): string {
         <p style="${LABEL}margin-bottom:8px;">Spike Alerts This Week</p>
         <table cellpadding="0" cellspacing="0">${p.spikesThisWeek.map((s) => spikeBadge(s.tower, s.pct)).join('')}</table>
        </td></tr>`
-    : `<tr><td style="${CELL}border-top:1px solid #1E293B;">
-        <p style="${MUTED}margin:0;">✓ No spike alerts this week</p>
+    : `<tr><td style="${CELL}border-top:1px solid ${EMAIL_TOKENS.border};">
+        <span style="display:inline-block;background:${EMAIL_TOKENS.greenBg};border:1px solid ${EMAIL_TOKENS.greenBorder};border-radius:20px;padding:6px 14px;color:${EMAIL_TOKENS.greenText};font-size:13px;font-weight:700;">✓ Clean week — no spike alerts</span>
        </td></tr>`;
 
   const body = `
@@ -381,7 +425,10 @@ function weeklyReportHtml(p: WeeklyReportPayload): string {
     </td></tr>
     ${spikesHtml}
     ${ctaSection(weeklyWaUrl)}`;
-  return emailShell('#2563EB', `Weekly Water Report: ${p.weekStart} → ${p.weekEnd}`, body);
+  const spikeNote = p.spikesThisWeek.length
+    ? `${p.spikesThisWeek.length} spike alert${p.spikesThisWeek.length > 1 ? 's' : ''} this week`
+    : 'a clean week, no spike alerts';
+  return emailShell('#2563EB', `${fmt(p.communityTotal)} community total — ${spikeNote}`, body);
 }
 
 function monthlyReportHtml(p: MonthlyReportPayload): string {
@@ -417,19 +464,28 @@ function monthlyReportHtml(p: MonthlyReportPayload): string {
       <h2 style="${H2}">Monthly Report</h2>
       <p style="${MUTED}margin:4px 0 0;">${p.month}</p>
     </td></tr>
-    <tr><td style="${CELL}text-align:center;border-bottom:1px solid #1E293B;">
-      <p style="${LABEL}">Total Community Consumption</p>
-      <p style="${VALUE_LG}">${fmt(p.communityTotal)}</p>
-      <p style="margin:4px 0 0;font-size:13px;">${pctChange(p.communityTotal, p.prevMonthTotal)}</p>
+    <tr><td style="${CELL}border-bottom:1px solid ${EMAIL_TOKENS.border};">
+      <table width="100%" cellpadding="0" cellspacing="0"><tr>
+        <!-- Spike alert days used to be buried in tiny muted text at the bottom of
+             the email; promoted here to a stat card alongside Community Total so it
+             gets equal billing (audit — monthly report). -->
+        <td width="58%" style="text-align:center;padding-right:8px;">
+          <p style="${LABEL}">Total Community Consumption</p>
+          <p style="${VALUE_LG}font-size:24px;">${fmt(p.communityTotal)}</p>
+          <p style="margin:4px 0 0;font-size:12px;">${pctChange(p.communityTotal, p.prevMonthTotal)}</p>
+        </td>
+        <td width="42%" style="text-align:center;padding-left:8px;border-left:1px solid ${EMAIL_TOKENS.border};">
+          <p style="${LABEL}">Spike Alert Days</p>
+          <p style="margin:0;font-size:24px;font-weight:900;color:${p.spikeDays > 0 ? EMAIL_TOKENS.redSoft : EMAIL_TOKENS.greenText};">${p.spikeDays}</p>
+          <p style="margin:4px 0 0;font-size:11px;color:${EMAIL_TOKENS.textFaint};">${p.spikeDays > 0 ? 'this month' : '✓ clean month'}</p>
+        </td>
+      </tr></table>
     </td></tr>
-    <tr><td style="${CELL}border-bottom:1px solid #1E293B;">
+    <tr><td style="${CELL}">
       <p style="${LABEL}margin-bottom:12px;">Per Tower Totals — ${p.month}</p>
       <table width="100%" cellpadding="0" cellspacing="0">${bars}</table>
     </td></tr>
-    <tr><td style="${CELL}">
-      <p style="${LABEL}margin-bottom:6px;">Month Summary</p>
-      <p style="${MUTED}margin:0;">Spike alert days this month: <strong style="color:#FCA5A5;">${p.spikeDays}</strong></p>
-    </td></tr>
     ${ctaSection()}`;
-  return emailShell('#7C3AED', `Monthly Water Report: ${p.month}`, body);
+  const spikeNote = p.spikeDays > 0 ? `${p.spikeDays} spike alert day${p.spikeDays > 1 ? 's' : ''}` : 'a clean month, no spike days';
+  return emailShell('#7C3AED', `${fmt(p.communityTotal)} for ${p.month} — ${spikeNote}`, body);
 }

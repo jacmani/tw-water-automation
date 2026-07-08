@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import Navbar from '@/components/Navbar';
+import Navbar, { IconAlerts } from '@/components/Navbar';
 import { supabase } from '@/lib/supabase';
 import { TOWER_COLORS, TOWER_TEXT_CLASSES } from '@/lib/utils';
 import type { CommitteeMember, CommitteeRole, TowerName } from '@/types';
@@ -258,6 +258,17 @@ export default function CommitteeAdmin() {
           <h1 className="text-base font-semibold text-slate-300 mt-0.5">Admin</h1>
         </div>
         <div className="flex items-center gap-2">
+          {/* P2-1: Alerts was demoted out of the public nav since it's an
+              ops-internal email log, not resident-facing. It's still one
+              click away for committee members once they're past the PIN
+              gate on this page. */}
+          <Link
+            href="/alerts"
+            className="flex items-center gap-1.5 text-slate-400 hover:text-white text-sm border border-slate-700 hover:border-slate-500 px-3 py-1.5 rounded-lg transition-colors"
+          >
+            <IconAlerts className="w-4 h-4" />
+            <span className="hidden sm:inline">Alert Log</span>
+          </Link>
           {terms.length > 0 && (
             <select
               value={selectedTerm}
@@ -272,7 +283,7 @@ export default function CommitteeAdmin() {
           {isCurrentTerm && (
             <button
               onClick={openAdd}
-              className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"
+              className="bg-blue-600 hover:bg-blue-500 active:scale-[0.98] text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-all"
             >
               + Add
             </button>
@@ -452,7 +463,7 @@ export default function CommitteeAdmin() {
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 text-white py-2.5 rounded-xl text-sm font-semibold transition-colors"
+                className="flex-1 bg-blue-600 hover:bg-blue-500 active:scale-[0.98] disabled:bg-slate-700 text-white py-2.5 rounded-xl text-sm font-semibold transition-all"
               >
                 {saving ? 'Saving…' : 'Save'}
               </button>
@@ -519,7 +530,7 @@ export default function CommitteeAdmin() {
               <button
                 onClick={handleNewTerm}
                 disabled={newTermSaving || !newTermLabel.trim()}
-                className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 text-white py-2.5 rounded-xl text-sm font-semibold transition-colors"
+                className="flex-1 bg-blue-600 hover:bg-blue-500 active:scale-[0.98] disabled:bg-slate-700 text-white py-2.5 rounded-xl text-sm font-semibold transition-all"
               >
                 {newTermSaving ? 'Creating…' : 'Create New Term'}
               </button>

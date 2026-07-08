@@ -8,6 +8,54 @@ function n(v: unknown): number | null {
   return isNaN(x) ? null : x;
 }
 
+// ── GET /api/logbook?date=YYYY-MM-DD ────────────────────────────────────────
+// Used by the entry form to hydrate an existing day's data (the "Edit this
+// entry" deep-link from /logbook) and to pull the previous day's cumulative
+// figures for the monotonicity check. Without this endpoint the edit link was
+// a data-loss trap: the form rendered empty and re-submitting blanked the
+// existing entry (P1-6).
+export async function GET(request: NextRequest) {
+  const supabase = createServerClient();
+  const date = request.nextUrl.searchParams.get('date');
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return NextResponse.json({ error: 'Invalid or missing date query param' }, { status: 400 });
+  }
+
+  const [
+    { data: log },
+    { data: towers },
+    { data: sources },
+    { data: amenities },
+    { data: levels },
+    { data: util },
+    { data: inflow },
+  ] = await Promise.all([
+    supabase.from('daily_log').select('*').eq('log_date', date).maybeSingle(),
+    supabase.from('tower_meter_readings').select('*').eq('log_date', date),
+    supabase.from('input_source_readings').select('*').eq('log_date', date),
+    supabase.from('amenity_meter_readings').select('*').eq('log_date', date),
+    supabase.from('water_level_readings').select('*').eq('log_date', date),
+    supabase.from('utility_meter_readings').select('*').eq('log_date', date).maybeSingle(),
+    supabase.from('daily_inflow_summary').select('*').eq('log_date', date).maybeSingle(),
+  ]);
+
+  if (!log) {
+    return NextResponse.json({ found: false, log_date: date });
+  }
+
+  return NextResponse.json({
+    found: true,
+    log_date: date,
+    log,
+    towers: towers ?? [],
+    sources: sources ?? [],
+    amenities: amenities ?? [],
+    levels: levels ?? [],
+    util: util ?? null,
+    inflow: inflow ?? null,
+  });
+}
+
 export async function POST(request: NextRequest) {
   const supabase = createServerClient();
 
@@ -41,6 +89,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to save log header' }, { status: 500 });
   }
 
+  // Collect (not throw on) child-table upsert errors — the header saved fine, and one
+  // failed table shouldn't block the others, but silently returning success:true when
+  // every single child upsert failed (H2) hid genuine data loss from the caller/UI.
+  const tableErrors: { table: string; message: string }[] = [];
+
   // ── Tower meter readings ──────────────────────────────────────────────────
   const towerRows = (body.tower_readings as unknown[]) ?? [];
   if (towerRows.length > 0) {
@@ -58,7 +111,7 @@ export async function POST(request: NextRequest) {
     const { error } = await supabase
       .from('tower_meter_readings')
       .upsert(rows, { onConflict: 'log_date,tower,meter_type' });
-    if (error) console.error('tower_meter_readings upsert error:', error);
+    if (error) { console.error('tower_meter_readings upsert error:', error); tableErrors.push({ table: 'tower_meter_readings', message: error.message }); }
   }
 
   // ── Input source readings ─────────────────────────────────────────────────
@@ -76,7 +129,7 @@ export async function POST(request: NextRequest) {
     const { error } = await supabase
       .from('input_source_readings')
       .upsert(rows, { onConflict: 'log_date,source_name' });
-    if (error) console.error('input_source_readings upsert error:', error);
+    if (error) { console.error('input_source_readings upsert error:', error); tableErrors.push({ table: 'input_source_readings', message: error.message }); }
   }
 
   // ── Amenity meter readings ────────────────────────────────────────────────
@@ -97,7 +150,7 @@ export async function POST(request: NextRequest) {
     const { error } = await supabase
       .from('amenity_meter_readings')
       .upsert(rows, { onConflict: 'log_date,amenity_type,location' });
-    if (error) console.error('amenity_meter_readings upsert error:', error);
+    if (error) { console.error('amenity_meter_readings upsert error:', error); tableErrors.push({ table: 'amenity_meter_readings', message: error.message }); }
   }
 
   // ── Water level readings ──────────────────────────────────────────────────
@@ -121,7 +174,7 @@ export async function POST(request: NextRequest) {
     const { error } = await supabase
       .from('water_level_readings')
       .upsert(rows, { onConflict: 'log_date,time_slot' });
-    if (error) console.error('water_level_readings upsert error:', error);
+    if (error) { console.error('water_level_readings upsert error:', error); tableErrors.push({ table: 'water_level_readings', message: error.message }); }
   }
 
   // ── Utility meter readings ────────────────────────────────────────────────
@@ -142,7 +195,7 @@ export async function POST(request: NextRequest) {
         consumption_today: n(util.consumption_today),
         consumption_total: n(util.consumption_total),
       }, { onConflict: 'log_date' });
-    if (error) console.error('utility_meter_readings upsert error:', error);
+    if (error) { console.error('utility_meter_readings upsert error:', error); tableErrors.push({ table: 'utility_meter_readings', message: error.message }); }
   }
 
   // ── Daily inflow summary ──────────────────────────────────────────────────
@@ -166,12 +219,22 @@ export async function POST(request: NextRequest) {
         cumulative_total_usage: n(inflow.cumulative_total_usage),
         cumulative_balance: n(inflow.cumulative_balance),
       }, { onConflict: 'log_date' });
-    if (error) console.error('daily_inflow_summary upsert error:', error);
+    if (error) { console.error('daily_inflow_summary upsert error:', error); tableErrors.push({ table: 'daily_inflow_summary', message: error.message }); }
   }
 
   // Purge ISR cache so dashboard shows new logbook data immediately
   revalidatePath('/');
   revalidatePath('/logbook');
+
+  // Header saved — that's the record of the day existing. But if every child table
+  // failed (or any did), tell the caller instead of claiming unconditional success.
+  if (tableErrors.length > 0) {
+    console.error(`[logbook] ${tableErrors.length} child-table upsert(s) failed for ${log_date}`, tableErrors);
+    return NextResponse.json(
+      { success: false, partial: true, log_date, error: 'Some sections failed to save — please re-check and re-submit this log.', tableErrors },
+      { status: 207 }
+    );
+  }
 
   return NextResponse.json({ success: true, log_date });
 }

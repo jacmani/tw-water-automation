@@ -30,6 +30,11 @@ yarn-error.log*
 # vercel
 .vercel
 
+# re-extract script phase cache (scripts/re-extract.ts --phase1/--phase2)
+/scripts/.re-extract-cache.json
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+.claude/worktrees/
+.next-verify/

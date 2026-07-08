@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { ExtractionResult } from '@/types';
+import { parseLenientJson } from './jsonRepair';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -31,6 +32,18 @@ Columns left to right:
   Volume Today (Ltrs) — Today volume
   Diff — Difference
 
+Below all 8 rows (Venus/Mercury/Neptune/Jupiter × DO/DR) there is a printed "TOTAL" row
+that sums the Volume Yesterday / Volume Today / Diff columns across all 8 rows for the
+whole complex — this is a SEPARATE grand-total row, not one more tower row. Read it into
+tower_section_total: {yesterday, today, diff}. This is the single most reliable
+cross-check available for this section — the technician has already added up all 8 rows
+themselves, so SUM(all 8 total_ltrs values) should reconcile with tower_section_total.today.
+If your own sum of the 8 total_ltrs values doesn't land close to the printed TOTAL row,
+one of your 8 individual readings is almost certainly wrong — re-examine each one
+(this is exactly how a single misread "Total Litres" cell, e.g. "1,23,000" misread as
+"1,83,000" via the 2-vs-8 confusion above, was caught in production: the printed TOTAL
+row said 650,000 but the 8 individual cells summed to 710,000).
+
 === SECTION 2: SOURCE/LOCATION SECTION ===
 Rows (read in this order — these match the PRINTED labels on the sheet):
   Mercury + Venus Tanker, Jupiter + Neptune Tanker, Venus Side Well 1 2 3, Venus Side Well 4,
@@ -47,11 +60,16 @@ If the values genuinely match after careful re-reading, set confidence < 0.8 and
 add both field names to flagged_fields.
 
 === SECTION 3: WATER LEVEL SECTION ===
-Physical tank levels taken 4 times daily. The sheet shows PERCENTAGE (%) only.
+Physical tank levels taken 4 times daily. Each cell shows TWO numbers written as "CM/Percentage"
+(e.g. "80/26" means the tank has 80cm of water and is 26% full; "230/70" means 230cm and 70% full).
+The FIRST number (before the slash, always the LARGER one) is the CM depth reading → cm_reading.
+The SECOND number (after the slash, always the SMALLER one, 0-100) is the fill percentage → percentage.
+Do NOT reverse these — percentage can never exceed 100. If you read a cell as two numbers and the
+"percentage" value would be over 100, you have them backwards: swap so the larger number is cm_reading
+and the smaller (≤100) number is percentage.
 Tanks (5 columns): JDO (Jupiter DO), JDR (Jupiter DR), CT (Collection Tank), MDO (Mercury DO), MDR (Mercury DR)
 Time slots (4 rows): 6AM (06.00 AM), 12PM (12.00 PM), 6PM (06.00 PM), 12AM (12.00 AM)
-If a CM reading is written alongside the percentage, capture it in cm_reading; otherwise leave cm_reading null.
-Blank cell = not taken yet → output null.
+Blank cell = not taken yet → output null for both cm_reading and percentage.
 
 === SECTION 4: AMENITIES SECTION ===
 CAR WASH (4 columns): Jupiter, Mercury, Venus, Neptune
@@ -112,10 +130,28 @@ CRITICAL HANDWRITING DISAMBIGUATION — these digit pairs are frequently confuse
   • 0 vs 1 vs 9: in tightly-spaced digit strings, trailing "0"s and "1"s bleed into
     each other. Re-read each digit of a DR total individually rather than as a
     single glance — DR totals are only 5 digits and errors compound easily.
+  • 3 vs 9: a handwritten "3" whose top curve doesn't fully open can look like a "9",
+    and a "9" whose descender is short/straight can look like a "3". This is
+    especially high-risk on the LEADING digit of a lakhs-format number in Section 6
+    (TOTAL INFLOW) — misreading just that one digit swings the value by 600,000 L
+    (e.g. "3,62,000" misread as "9,62,000"). Always double-check the leading digit
+    of water_inflow/well_inflow/tanker_inflow/input_total/tower_usage against the
+    row's own arithmetic: TOTAL COLLECTION − TOTAL USAGE should equal the printed
+    BALANCE. If your reading doesn't reconcile with the sheet's own BALANCE figure,
+    re-examine the leading digit before finalizing.
   • DR totals in this complex are almost always in the 5,000–40,000 range. If your
     first read of a DR total starts with 5, 8, or 9, treat that as a strong signal
     to re-examine whether the true leading digit is smaller (1, 2, or 3) before
     settling on your answer.
+
+BEFORE writing down any multi-digit number, read it digit by digit, left to right,
+silently naming each digit in turn ("one... seven... six... zero... zero... zero"),
+THEN combine those digits into the final integer. Do not read a written number as a
+single holistic shape and transcribe it in one glance — that is how "1,76,000" becomes
+"1,16,000" and "3,62,000" becomes "9,62,000" (both real production misreads on this
+template). Digit-by-digit reading catches exactly the kind of single-glyph confusion
+listed above that whole-number pattern-matching misses.
+
 When in doubt between two readings, prefer the one that falls within the expected
 sanity range AND is consistent with meter reading delta (r_today − r_yesterday).
 
@@ -188,6 +224,7 @@ Return ONLY a valid JSON object — no markdown, no explanation. Use null for bl
       "DR": {"r_yesterday": null, "r_today": null, "total_ltrs": null, "vol_yesterday": null, "vol_today": null, "diff": null, "confidence": 0.0}
     }
   },
+  "tower_section_total": {"yesterday": null, "today": null, "diff": null},
   "water_sources": [
     {"location": "Mercury + Venus Tanker",  "r_yesterday": null, "r_today": null, "yesterday_ltrs": null, "today_ltrs": null, "total": null, "confidence": 0.0},
     {"location": "Jupiter + Neptune Tanker","r_yesterday": null, "r_today": null, "yesterday_ltrs": null, "today_ltrs": null, "total": null, "confidence": 0.0},
@@ -248,7 +285,16 @@ export interface ClaudeUsage {
   cache_read_input_tokens?: number;
 }
 
-async function runExtraction(
+/**
+ * This is the actual Claude Haiku call — used both as the primary-fallback
+ * (when GEMINI_API_KEY is unset) and as the paid escalation engine inside
+ * extractSheetDataInner() below. Also exported directly for
+ * scripts/re-extract.ts, which needs to split the primary + escalation calls
+ * across separate process invocations in time-boxed environments (each raw
+ * Claude vision call takes ~20s; some sandboxes hard-cap a single command at
+ * ~45s, too tight for primary+escalation chained in one run).
+ */
+export async function runExtraction(
   base64Image: string,
   mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
   model: string,
@@ -271,7 +317,16 @@ async function runExtraction(
 
   const response = await anthropic.beta.promptCaching.messages.create({
     model,
-    max_tokens: 4096,
+    // Was 4096 — raised after a 2026-07-05 production incident: a sheet with
+    // many flagged_fields (each a full sentence, e.g. "summary.input_total:
+    // 291000 disagrees with WATER+WELL+TANKER=237200 on the same row — needs
+    // manual verification") pushed Haiku's response past 4096 tokens, cutting
+    // it off before the closing ``` fence. The single-regex fence-strip below
+    // then fell through to the raw truncated text and crashed JSON.parse,
+    // surfacing a raw SyntaxError to the technician mid-upload. 8192 gives
+    // real headroom for the verbose flagged_fields text without materially
+    // changing cost (Haiku output tokens are billed per-token, not per-cap).
+    max_tokens: 8192,
     system: [{ type: 'text', text: EXTRACTION_PROMPT, cache_control: { type: 'ephemeral' } }],
     messages: [
       {
@@ -290,13 +345,17 @@ async function runExtraction(
   const content = response.content[0];
   if (content.type !== 'text') throw new Error('Unexpected response type from Claude');
 
-  // Strip markdown fences if present, then parse
-  const text = content.text.trim();
-  const jsonStr = text.startsWith('{')
-    ? text
-    : (text.match(/```(?:json)?\n?([\s\S]*?)\n?```/)?.[1] ?? text);
-
-  const parsed: ExtractionResult = JSON.parse(jsonStr);
+  // Tolerant parse — same repair logic used for Gemini (see jsonRepair.ts):
+  // strips markdown fences, drops trailing commas, and closes dangling
+  // brackets/strings if the response was truncated (raised max_tokens above
+  // should make truncation rare now, but this is the defense-in-depth layer
+  // so a cut-off response degrades to a parse failure we handle below, never
+  // a raw SyntaxError shown to the technician).
+  const parsed = parseLenientJson(content.text) as ExtractionResult | null;
+  if (!parsed || typeof parsed !== 'object') {
+    console.error(`[anthropic] Could not parse Haiku JSON even after repair. First 300 chars: ${content.text.trim().slice(0, 300)}`);
+    throw new Error('Claude Haiku returned a response that could not be read — please retry the upload.');
+  }
   if (!parsed.flagged_fields) parsed.flagged_fields = [];
   return { result: parsed, usage };
 }
@@ -310,6 +369,68 @@ const DR_CEILING = 80_000;  // DR range max is 40,000 L
 // below are merely suspicious and warrant independent corroboration before trusting.
 const DO_EXPECTED_MAX = 250_000;
 const DR_EXPECTED_MAX = 40_000;
+
+// Summary section (Section 6: TOTAL INFLOW) sanity ranges — same numbers already
+// given to the model in the extraction prompt above, now ALSO enforced in code.
+// Incident (2026-07-02 sheet): Gemini read input_total=43,300 — a 10x/digit-drop
+// misread (water_sources today_ltrs summed to ~433,000, and the sheet's own printed
+// Diff only reconciles against ~433,000). It reached the DB at confidence 1.0
+// because nothing checked the summary section at all: Qwen doesn't reliably read it,
+// the free tie-breaker only re-reads tower totals, and checkSanity() only validated
+// tower_section. This is the gap that let it through.
+const INPUT_TOTAL_MIN = 150_000;
+const INPUT_TOTAL_MAX = 900_000;
+const TOWER_USAGE_MIN = 300_000;
+const TOWER_USAGE_MAX = 800_000;
+
+// Section 2 (water_sources) — same gap, one tier down: the documented "Total column:
+// 20,000-400,000 L" range was only ever prompt text, never enforced. Flag-only (no
+// auto-correction source exists for this field either).
+const SOURCE_TOTAL_MIN = 20_000;
+const SOURCE_TOTAL_MAX = 400_000;
+
+// Substrings that mark a flagged_fields entry as coming from a checkSanity /
+// enforceHardCeilings violation, as opposed to an extractionValidator.ts note
+// (e.g. "unverified_number:", "date_mismatch:") which uses different wording.
+const SANITY_FLAG_MARKERS = [
+  'outside expected range',
+  'disagrees with',
+  'inconsistent with',
+  'FINAL_CLAMP',
+  'NULLED',
+  'auto-corrected',
+  'sanity_violation',
+  'manual verification',
+  'manual review',
+  'manual_review',
+];
+
+/**
+ * Incident (2026-07-05 sheet): summary.input_total was misread 362,000 → 962,000
+ * (leading lakhs digit "3" read as "9" — a confusion pair not previously called out
+ * in the disambiguation guidance). checkSanity() correctly flagged it (962,000 >
+ * the 900,000 documented ceiling) and the escalation path is designed to cap
+ * overall_confidence low when a summary-section violation can't be auto-corrected —
+ * but both upload routes call validateExtraction() AFTERWARDS and unconditionally
+ * ADD its OCR-corroboration confidenceBoost on top, with no ceiling tied to the
+ * violation. Generic word-level OCR (Google Vision / OCR.space) reads the SAME
+ * ambiguous handwriting and often "corroborates" the very same wrong digit string,
+ * so the boost pushed confidence from a sanity-capped ~0.55 back up past 0.80 —
+ * silently erasing the exact warning checkSanity exists to raise. This sheet
+ * reached the dashboard at 90% confidence carrying a 600,000 L error.
+ *
+ * Fix: once ANY sanity-violation flag is present on the result, corroboration may
+ * still nudge confidence around but can never cross this ceiling — a violated
+ * internal-consistency check must always outrank "OCR agrees with itself," since
+ * the OCR sources are reading the same misleading pixels, not an independent truth.
+ */
+export const SANITY_CONFIDENCE_CEILING = 0.6;
+
+/** Used by both upload routes — see SANITY_CONFIDENCE_CEILING doc comment above. */
+export function hasSanityViolationFlag(flags: string[] | undefined): boolean {
+  if (!flags || flags.length === 0) return false;
+  return flags.some(f => SANITY_FLAG_MARKERS.some(marker => f.includes(marker)));
+}
 
 interface SanityReport {
   violated: boolean;
@@ -421,7 +542,8 @@ function findIndependentReading(
  * vol_today — closing the gap where a single engine's misread of one row's handwriting
  * silently "self-confirms" via another cell in that same misread row.
  */
-function checkSanity(
+/** Exported for scripts/re-extract.ts — see runExtraction doc comment above. */
+export function checkSanity(
   result: ExtractionResult,
   qwenResult?: QwenVisionResult,
   openRouterResult?: OpenRouterVisionResult
@@ -496,6 +618,135 @@ function checkSanity(
     }
   }
 
+  // ── Tower-section aggregate cross-check ─────────────────────────────────────
+  // Documented invariant (CLAUDE.md): "Tower Usage [Section 6] should approximately
+  // match total from Tower Section. A large Diff flags an anomaly" — this was
+  // documented but never actually implemented in code. Incident (2026-07-06 sheet):
+  // Venus DO and Mercury DO were each misread by ~60-66k L (the classic "1,23,000"
+  // vs "1,83,000" 2-vs-8 digit confusion already called out above), inflating the
+  // 8-row sum to 710,000 while the sheet's own printed Section 1 TOTAL row said
+  // 650,000 — nothing compared the sum against any reference, so the error reached
+  // the dashboard's "Community Total" undetected at high confidence. No
+  // auto-correction here (same reasoning as Section 6: we don't know WHICH of the
+  // 8 cells is wrong from this check alone) — flag + force manual review.
+  const towerLtrsSum = (['Venus', 'Mercury', 'Neptune', 'Jupiter'] as const).reduce((sum, tw) => {
+    const t = towers[tw];
+    return sum + (t?.DO?.total_ltrs ?? 0) + (t?.DR?.total_ltrs ?? 0);
+  }, 0);
+
+  if (towerLtrsSum > 0) {
+    // Cross-check against the sheet's own printed Section 1 TOTAL row, if captured.
+    const sectionTotal = result.tower_section_total?.today;
+    if (sectionTotal != null && sectionTotal > 0) {
+      const ratio = Math.min(towerLtrsSum, sectionTotal) / Math.max(towerLtrsSum, sectionTotal);
+      if (ratio < 0.92) {
+        console.warn(`[sanity] SUM(tower total_ltrs)=${towerLtrsSum} vs printed Section 1 TOTAL row=${sectionTotal} ratio=${ratio.toFixed(2)}`);
+        violated = true;
+        result.flagged_fields = [
+          ...(result.flagged_fields ?? []),
+          `tower_section: SUM(all 8 total_ltrs)=${towerLtrsSum} disagrees with the sheet's own printed TOTAL row=${sectionTotal} — one of the 8 individual readings is likely misread, needs manual verification`,
+        ];
+      }
+    }
+
+    // Cross-check against summary.tower_usage (Section 6's own "TOTAL USAGE" figure) —
+    // documented in CLAUDE.md as an invariant, now actually enforced.
+    const usageTotal = result.summary?.tower_usage;
+    if (usageTotal != null && usageTotal > 0) {
+      const ratio = Math.min(towerLtrsSum, usageTotal) / Math.max(towerLtrsSum, usageTotal);
+      if (ratio < 0.85) {
+        console.warn(`[sanity] SUM(tower total_ltrs)=${towerLtrsSum} vs summary.tower_usage=${usageTotal} ratio=${ratio.toFixed(2)}`);
+        violated = true;
+        result.flagged_fields = [
+          ...(result.flagged_fields ?? []),
+          `tower_section: SUM(all 8 total_ltrs)=${towerLtrsSum} disagrees with summary.tower_usage=${usageTotal} — needs manual verification`,
+        ];
+      }
+    }
+  }
+
+  // ── Summary section (Section 6: TOTAL INFLOW) ──────────────────────────────
+  // No tower-style auto-correction here: unlike tower rows, there is no reliable
+  // independent same-pass column (vol_today) or guaranteed second engine reading
+  // for these fields, so we only flag + lower confidence and force manual review —
+  // never fabricate a "corrected" input_total/tower_usage.
+  const summary = result.summary;
+  if (summary) {
+    if (summary.input_total != null &&
+        (summary.input_total < INPUT_TOTAL_MIN || summary.input_total > INPUT_TOTAL_MAX)) {
+      console.warn(`[sanity] summary.input_total=${summary.input_total} outside expected range [${INPUT_TOTAL_MIN}, ${INPUT_TOTAL_MAX}]`);
+      violated = true;
+      result.flagged_fields = [
+        ...(result.flagged_fields ?? []),
+        `summary.input_total: ${summary.input_total} outside expected range [${INPUT_TOTAL_MIN}, ${INPUT_TOTAL_MAX}] — likely digit-drop/misread, needs manual verification`,
+      ];
+    }
+
+    if (summary.tower_usage != null &&
+        (summary.tower_usage < TOWER_USAGE_MIN || summary.tower_usage > TOWER_USAGE_MAX)) {
+      console.warn(`[sanity] summary.tower_usage=${summary.tower_usage} outside expected range [${TOWER_USAGE_MIN}, ${TOWER_USAGE_MAX}]`);
+      violated = true;
+      result.flagged_fields = [
+        ...(result.flagged_fields ?? []),
+        `summary.tower_usage: ${summary.tower_usage} outside expected range [${TOWER_USAGE_MIN}, ${TOWER_USAGE_MAX}] — likely digit-drop/misread, needs manual verification`,
+      ];
+    }
+
+    // Same-row identity check: TOTAL COLLECTION should ≈ WATER + WELL + TANKER
+    // (all four cells sit on the same printed row — an internal consistency check
+    // that doesn't depend on any other section or engine).
+    const { water_inflow, well_inflow, tanker_inflow, input_total } = summary;
+    if (water_inflow != null && well_inflow != null && tanker_inflow != null && input_total != null) {
+      const computedInput = water_inflow + well_inflow + tanker_inflow;
+      if (computedInput > 0) {
+        const ratio = Math.min(computedInput, input_total) / Math.max(computedInput, input_total);
+        if (ratio < 0.85) {
+          console.warn(`[sanity] summary.input_total=${input_total} vs water+well+tanker=${computedInput} ratio=${ratio.toFixed(2)}`);
+          violated = true;
+          result.flagged_fields = [
+            ...(result.flagged_fields ?? []),
+            `summary.input_total: ${input_total} disagrees with WATER+WELL+TANKER=${computedInput} on the same row — needs manual verification`,
+          ];
+        }
+      }
+    }
+
+    // Cross-section check: TOTAL COLLECTION should roughly track the sum of
+    // Section 2's individual source rows for the day (today_ltrs). This is a
+    // softer signal (Section 6 subtotals aren't defined as a pure sum of Section 2
+    // rows) so it only flags — it does not by itself force violated=true unless
+    // combined with the absolute-range check above being silent (input_total
+    // in-range but still wildly inconsistent with Section 2).
+    const wsSum = (result.water_sources ?? []).reduce((s, r) => s + (r.today_ltrs ?? 0), 0);
+    if (wsSum > 50_000 && input_total != null) {
+      const ratio = Math.min(wsSum, input_total) / Math.max(wsSum, input_total);
+      if (ratio < 0.5) {
+        console.warn(`[sanity] summary.input_total=${input_total} vs water_sources today_ltrs sum=${wsSum} ratio=${ratio.toFixed(2)}`);
+        violated = true;
+        result.flagged_fields = [
+          ...(result.flagged_fields ?? []),
+          `summary.input_total: ${input_total} inconsistent with Section 2 today_ltrs sum=${wsSum} — needs manual verification`,
+        ];
+      }
+    }
+  }
+
+  // ── Section 2 (water_sources) row-level range check ─────────────────────────
+  // Same "documented in the prompt, never enforced in code" gap, one tier down.
+  // Flag-only — no independent reading of an individual source row exists to
+  // auto-correct from.
+  for (const row of result.water_sources ?? []) {
+    if (row.total != null && row.total > 0 &&
+        (row.total < SOURCE_TOTAL_MIN || row.total > SOURCE_TOTAL_MAX)) {
+      console.warn(`[sanity] water_sources["${row.location}"].total=${row.total} outside expected range [${SOURCE_TOTAL_MIN}, ${SOURCE_TOTAL_MAX}]`);
+      violated = true;
+      result.flagged_fields = [
+        ...(result.flagged_fields ?? []),
+        `water_sources["${row.location}"].total: ${row.total} outside expected range [${SOURCE_TOTAL_MIN}, ${SOURCE_TOTAL_MAX}] — needs manual verification`,
+      ];
+    }
+  }
+
   return { violated, corrections };
 }
 
@@ -508,7 +759,8 @@ function checkSanity(
  * from same-engine data (vol_today / meter delta / ÷10) after two production incidents
  * where those guesses landed on confident-looking wrong numbers.
  */
-function applyCorrections(result: ExtractionResult, corrections: SanityReport['corrections']): ExtractionResult {
+/** Exported for scripts/re-extract.ts — see runExtraction doc comment above. */
+export function applyCorrections(result: ExtractionResult, corrections: SanityReport['corrections']): ExtractionResult {
   for (const { tower, type, correctedTotal, source } of corrections) {
     const row = result.tower_section?.[tower as 'Venus'|'Mercury'|'Neptune'|'Jupiter']?.[type];
     if (!row) continue;
@@ -533,7 +785,8 @@ function applyCorrections(result: ExtractionResult, corrections: SanityReport['c
  * which engine produced it or whether earlier escalation/correction logic ran.
  * This is the safety net whose absence let Venus DO=1,416,000 L through.
  */
-function enforceHardCeilings(
+/** Exported for scripts/re-extract.ts — see runExtraction doc comment above. */
+export function enforceHardCeilings(
   result: ExtractionResult,
   qwenResult?: QwenVisionResult,
   openRouterResult?: OpenRouterVisionResult
@@ -586,6 +839,12 @@ interface TowerTotalReading {
 }
 
 const TOLERANCE_RATIO = 0.85; // <0.85 (>15% apart) = genuine disagreement
+// Section 2 (water_sources) tolerance — kept as its own module-level constant (not just
+// a local inside findSourceDisagreements) so resolveSourceTieBreaker can share it. See
+// docs/ocr-audit-2026-07.md P0-3 — this used to only gate the disagreement check; now it
+// also gates the free tie-break resolution, closing the gap where Section 2 disagreements
+// skipped the free tie-breaker entirely and went straight to paid escalation.
+const SOURCE_TOLERANCE_RATIO = 0.80; // 25% tolerance — Section 2 rows are noisier across engines
 
 /**
  * Compare a primary extraction's tower totals against an independent engine's
@@ -626,7 +885,7 @@ function findSourceDisagreements(
   otherLabel: string
 ): string[] {
   if (sourceReadings.length === 0) return [];
-  const TOLERANCE_SOURCE = 0.80; // 25% tolerance — more lenient for Section 2
+  const TOLERANCE_SOURCE = SOURCE_TOLERANCE_RATIO; // 25% tolerance — more lenient for Section 2
   const disagreements: string[] = [];
   for (const r of sourceReadings) {
     if (r.total === null || r.total === 0) continue;
@@ -730,13 +989,112 @@ function resolveWithTieBreaker(
 }
 
 /**
+ * Same 2-of-3 free-engine tie-break logic as resolveWithTieBreaker, applied to
+ * Section 2 (water_sources) instead of tower totals. Added to close the gap
+ * documented in docs/ocr-audit-2026-07.md (P0-3): source disagreements used to skip
+ * the free tie-breaker entirely and go straight to paid Haiku, even though Qwen and
+ * OpenRouter both now read Section 2. Callers must check `openRouter.success` before
+ * calling this (mirrors the availability check already done once per upload in
+ * extractSheetDataInner, rather than repeating it per-section here).
+ */
+function resolveSourceTieBreaker(
+  primary: ExtractionResult,
+  qwen: QwenVisionResult,
+  openRouter: OpenRouterVisionResult
+): { resolved: number; unresolved: number } {
+  let resolved = 0;
+  let unresolved = 0;
+  if (openRouter.sourceReadings.length === 0) return { resolved: 0, unresolved: 0 };
+
+  for (const orr of openRouter.sourceReadings) {
+    if (orr.total === null) continue;
+    const pSource = primary.water_sources?.find(s => s.location === orr.location);
+    const pv = pSource?.total;
+    const qv = qwen.sourceReadings.find(q => q.location === orr.location)?.total ?? null;
+    if (pv === null || pv === undefined || qv === null || !pSource) continue;
+
+    const pqRatio = Math.min(pv, qv) / Math.max(pv, qv);
+    if (pqRatio >= SOURCE_TOLERANCE_RATIO) continue; // primary & qwen already agree
+
+    const agreesPrimary = Math.min(pv, orr.total) / Math.max(pv, orr.total) >= SOURCE_TOLERANCE_RATIO;
+    const agreesQwen = Math.min(qv, orr.total) / Math.max(qv, orr.total) >= SOURCE_TOLERANCE_RATIO;
+
+    if (agreesPrimary && !agreesQwen) {
+      resolved++; // OpenRouter sides with primary → keep primary value
+      console.log(`[extraction] source tie-breaker: OpenRouter confirms primary for "${orr.location}"=${pv}`);
+    } else if (agreesQwen && !agreesPrimary) {
+      console.warn(`[extraction] source tie-breaker: 2/3 free engines (Qwen+OpenRouter) agree → "${orr.location}" ${pv} → ${qv}`);
+      pSource.total = qv;
+      pSource.confidence = Math.min(pSource.confidence ?? 1, 0.8);
+      primary.flagged_fields = [
+        ...(primary.flagged_fields ?? []),
+        `water_source_${orr.location}_total: tie-broken by free engines (Qwen+OpenRouter agreed on ${qv})`,
+      ];
+      resolved++;
+    } else {
+      unresolved++; // no 2-of-3 majority → needs paid escalation
+    }
+  }
+  return { resolved, unresolved };
+}
+
+/**
+ * Same 2-of-3 free-engine tie-break logic, applied to Section 6 (summary.input_total
+ * and summary.tower_usage) — the two fields directly implicated in both documented
+ * production incidents (docs/ocr-audit-2026-07.md P0-3).
+ */
+function resolveSummaryTieBreaker(
+  primary: ExtractionResult,
+  qwen: QwenVisionResult,
+  openRouter: OpenRouterVisionResult
+): { resolved: number; unresolved: number } {
+  let resolved = 0;
+  let unresolved = 0;
+  if (!primary.summary) return { resolved: 0, unresolved: 0 };
+
+  const fields: Array<{ key: 'input_total' | 'tower_usage'; orVal: number | null; qVal: number | null; label: string }> = [
+    { key: 'input_total', orVal: openRouter.summaryInputTotal, qVal: qwen.summaryInputTotal, label: 'summary.input_total' },
+    { key: 'tower_usage', orVal: openRouter.summaryTowerUsage, qVal: qwen.summaryTowerUsage, label: 'summary.tower_usage' },
+  ];
+
+  for (const f of fields) {
+    if (f.orVal === null || f.qVal === null) continue;
+    const pv = primary.summary[f.key];
+    if (pv === null || pv === undefined) continue;
+
+    const pqRatio = Math.min(pv, f.qVal) / Math.max(pv, f.qVal);
+    if (pqRatio >= TOLERANCE_RATIO) continue; // primary & qwen already agree
+
+    const agreesPrimary = Math.min(pv, f.orVal) / Math.max(pv, f.orVal) >= TOLERANCE_RATIO;
+    const agreesQwen = Math.min(f.qVal, f.orVal) / Math.max(f.qVal, f.orVal) >= TOLERANCE_RATIO;
+
+    if (agreesPrimary && !agreesQwen) {
+      resolved++;
+      console.log(`[extraction] summary tie-breaker: OpenRouter confirms primary for ${f.label}=${pv}`);
+    } else if (agreesQwen && !agreesPrimary) {
+      console.warn(`[extraction] summary tie-breaker: 2/3 free engines (Qwen+OpenRouter) agree → ${f.label} ${pv} → ${f.qVal}`);
+      primary.summary[f.key] = f.qVal;
+      primary.flagged_fields = [
+        ...(primary.flagged_fields ?? []),
+        `${f.label}: tie-broken by free engines (Qwen+OpenRouter agreed on ${f.qVal})`,
+      ];
+      resolved++;
+    } else {
+      unresolved++;
+    }
+  }
+  return { resolved, unresolved };
+}
+
+/**
  * Run the primary full-sheet extraction. Cost-inverted by default:
  *   EXTRACTION_PRIMARY=gemini → Gemini 2.5 Flash (FREE). Falls back to Haiku only if
  *                               Gemini is unavailable (no key / API error).
  *   EXTRACTION_PRIMARY=haiku  → Claude Haiku (legacy paid-primary, instant rollback).
  * Returns the result plus the engine label that produced it.
  */
-async function runPrimaryExtraction(
+/** Exported for scripts/re-extract.ts — see runExtraction doc comment above. */
+export async function runPrimaryExtraction(
   base64Image: string,
   mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
   ocrTranscript?: string,
@@ -805,13 +1163,9 @@ export async function extractSheetData(
   cost?: CostTracker,
   progress?: ExtractionProgressFn
 ): Promise<ExtractionResult> {
-  const result = await extractSheetDataInner(base64Image, mediaType, qwenResult, mistralOcr, cost, progress);
-  return enforceHardCeilings(result, qwenResult, lastOpenRouterResult);
+  const { result, openRouterResult } = await extractSheetDataInner(base64Image, mediaType, qwenResult, mistralOcr, cost, progress);
+  return enforceHardCeilings(result, qwenResult, openRouterResult);
 }
-
-// Captures the OpenRouter tie-breaker result (if it ran) so the public wrapper's
-// final enforceHardCeilings pass can also benefit from it.
-let lastOpenRouterResult: OpenRouterVisionResult | undefined;
 
 async function extractSheetDataInner(
   base64Image: string,
@@ -820,8 +1174,13 @@ async function extractSheetDataInner(
   mistralOcr?: MistralOcrResult,
   cost?: CostTracker,
   progress?: ExtractionProgressFn
-): Promise<ExtractionResult> {
-  lastOpenRouterResult = undefined;
+): Promise<{ result: ExtractionResult; openRouterResult: OpenRouterVisionResult | undefined }> {
+  // Local to this call — NOT module-level. A module-level singleton here (as this used
+  // to be, mirroring the just-removed lastClaudeUsage) would let two concurrent uploads
+  // on the same warm server process interleave across await points and read back each
+  // other's OpenRouter result, corrupting one sheet's sanity check with another sheet's
+  // data. Threading it through the return value instead makes that structurally impossible.
+  let openRouterResult: OpenRouterVisionResult | undefined;
   const ocrTranscript = mistralOcr?.success ? mistralOcr.markdown : undefined;
 
   // Record the free engines that already ran in Phase 1 (parallel, by the route).
@@ -852,7 +1211,7 @@ async function extractSheetDataInner(
   if (gateClean) {
     console.log('[extraction] Agreement gate PASSED → accepting free result, no paid call');
     progress?.('success', 'Agreement gate PASSED — Qwen agrees, sanity OK', 'accepting free result · no paid call');
-    return result;
+    return { result, openRouterResult };
   }
 
   const gateFailReasons: string[] = [];
@@ -864,49 +1223,83 @@ async function extractSheetDataInner(
   console.log(`[extraction] Gate failed (tower=${qwenTowerDisagreements.length} src=${qwenSourceDisagreements.length} summary=${qwenSummaryDisagreements.length} sanity=${sanity.violated} lowConf=${lowConfidence})`);
   progress?.('warn', `Agreement gate FAILED — ${gateFailReasons.join(', ')}`, 'trying free tie-breaker next');
 
-  // ── Phase 2.3: free tie-breaker (OpenRouter) for TOWER disagreements only ───
-  // Source and summary disagreements cannot be resolved by the free tie-breaker
-  // (which only reads tower totals) — route them straight to paid escalation.
+  // ── Phase 2.3: free tie-breaker (OpenRouter) — tower + source + summary ─────
+  // Was: only tower disagreements ever got a free tie-break attempt; source and
+  // summary disagreements skipped straight to paid escalation because OpenRouter
+  // used to only read the 8 tower totals. Both documented production incidents
+  // (2026-07-02, 2026-07-05) were summary-section misreads, so that was exactly
+  // backwards — the highest-stakes fields had the least free redundancy. Now
+  // OpenRouter reads all three sections (see openRouterVision.ts), so ANY
+  // disagreement type triggers one OpenRouter call and each section gets its own
+  // 2-of-3 resolution pass. See docs/ocr-audit-2026-07.md P0-3.
   let stillNeedsPaid = sanity.violated || lowConfidence;
-  if (qwenSourceDisagreements.length > 0 || qwenSummaryDisagreements.length > 0) {
-    stillNeedsPaid = true;
-  }
+  const anyFreeDisagreement =
+    qwenTowerDisagreements.length > 0 ||
+    qwenSourceDisagreements.length > 0 ||
+    qwenSummaryDisagreements.length > 0;
 
-  if (qwenTowerDisagreements.length > 0 && qwenResult) {
+  if (anyFreeDisagreement && qwenResult) {
     progress?.('info', 'Free tie-breaker — calling OpenRouter (Qwen2.5-VL-32B)…', 'free · 3rd independent engine');
     const t0 = Date.now();
     const openRouter = await extractTowerTotalsWithOpenRouter(base64Image, mediaType);
-    lastOpenRouterResult = openRouter;
+    openRouterResult = openRouter;
     const ms = Date.now() - t0;
     if (openRouter.success) {
       cost?.addFree('OpenRouter (tie-breaker)', 'free tier');
-      progress?.('engine', `OpenRouter ✓ (${ms}ms)`, 'Qwen2.5-VL-32B — resolving tower disputes');
+      progress?.('engine', `OpenRouter ✓ (${ms}ms)`, 'Qwen2.5-VL-32B — resolving tower/source/summary disputes');
     } else {
       progress?.('warn', 'OpenRouter tie-breaker unavailable', 'routing to paid escalation');
     }
-    const { resolved, unresolved } = resolveWithTieBreaker(result, qwenResult, openRouter);
-    if (unresolved === -1) {
-      console.log('[extraction] Tie-breaker unavailable — tower disagreements remain → paid escalation');
+
+    if (!openRouter.success) {
+      console.log('[extraction] Tie-breaker unavailable — disagreements remain → paid escalation');
       stillNeedsPaid = true;
     } else {
-      console.log(`[extraction] Tie-breaker resolved ${resolved} tower row(s), ${unresolved} unresolved`);
-      if (unresolved > 0) {
-        progress?.('warn', `Tie-breaker resolved ${resolved}, but ${unresolved} row(s) still disputed`, 'escalating to Claude Haiku');
+      const towerResult = qwenTowerDisagreements.length > 0
+        ? resolveWithTieBreaker(result, qwenResult, openRouter)
+        : { resolved: 0, unresolved: 0 };
+      const sourceResult = qwenSourceDisagreements.length > 0
+        ? resolveSourceTieBreaker(result, qwenResult, openRouter)
+        : { resolved: 0, unresolved: 0 };
+      const summaryResult = qwenSummaryDisagreements.length > 0
+        ? resolveSummaryTieBreaker(result, qwenResult, openRouter)
+        : { resolved: 0, unresolved: 0 };
+
+      // resolveWithTieBreaker can still return unresolved=-1 (its own internal
+      // "tie-breaker unavailable" sentinel) — treat that the same as >0 unresolved.
+      const totalUnresolved =
+        Math.max(towerResult.unresolved, 0) + sourceResult.unresolved + summaryResult.unresolved +
+        (towerResult.unresolved === -1 ? 1 : 0);
+      const totalResolved = towerResult.resolved + sourceResult.resolved + summaryResult.resolved;
+
+      console.log(`[extraction] Tie-breaker resolved ${totalResolved} field(s), ${totalUnresolved} unresolved (tower=${towerResult.resolved}/${towerResult.unresolved} source=${sourceResult.resolved}/${sourceResult.unresolved} summary=${summaryResult.resolved}/${summaryResult.unresolved})`);
+      if (totalUnresolved > 0) {
+        progress?.('warn', `Tie-breaker resolved ${totalResolved}, but ${totalUnresolved} field(s) still disputed`, 'escalating to Claude Haiku');
         stillNeedsPaid = true;
       } else {
-        progress?.('success', `Tie-breaker resolved all ${resolved} disputed row(s)`, 'no paid call needed');
+        progress?.('success', `Tie-breaker resolved all ${totalResolved} disputed field(s)`, 'no paid call needed');
       }
-      // Re-run sanity after free corrections — may now be clean.
-      if (!stillNeedsPaid && !checkSanity(result, qwenResult, openRouter).violated) {
+
+      // Re-run sanity after free corrections — may now be clean. IMPORTANT: if it's
+      // STILL violated after the tie-breaker claims to have "resolved" every disputed
+      // row, that is NOT actually resolved — this used to fall through to `if
+      // (!stillNeedsPaid) return result` below and silently ship a value that fails
+      // its own sanity check. Force paid escalation instead.
+      const postCorrectionSanity = checkSanity(result, qwenResult, openRouter);
+      if (!stillNeedsPaid && !postCorrectionSanity.violated) {
         result.flagged_fields = [...(result.flagged_fields ?? []), 'resolved_by:free_tie_breaker'];
         console.log('[extraction] Resolved entirely by free engines → no paid call');
-        return result;
+        return { result, openRouterResult };
+      }
+      if (postCorrectionSanity.violated) {
+        console.warn('[extraction] Tie-breaker "resolved" all rows but result STILL fails sanity → forcing paid escalation instead of returning it');
+        stillNeedsPaid = true;
       }
     }
   }
 
   if (!stillNeedsPaid) {
-    return result;
+    return { result, openRouterResult };
   }
 
   // ── Phase 2.4: PAID escalation to Claude Haiku (last resort — NO Opus) ───────
@@ -924,11 +1317,11 @@ async function extractSheetDataInner(
   if (lowConfidence) reasons.push('low_confidence');
 
   // Run sanity on Haiku too — the escalation engine can share the same misread.
-  // Passing qwenResult/lastOpenRouterResult here is the crux of the fix: if Haiku
+  // Passing qwenResult/openRouterResult here is the crux of the fix: if Haiku
   // ALSO breaches sanity on the same row, prefer Qwen's (different visual encoder)
   // reading over Haiku's own vol_today — the same row's handwriting can fool both
   // Gemini and Haiku identically, but is much less likely to fool Qwen the same way.
-  const haikuSanity = checkSanity(haikuResult, qwenResult, lastOpenRouterResult);
+  const haikuSanity = checkSanity(haikuResult, qwenResult, openRouterResult);
   if (haikuSanity.violated && haikuSanity.corrections.length > 0) {
     console.warn('[extraction] Haiku escalation ALSO failed sanity → auto-correcting (independent engine preferred over vol_today)');
     applyCorrections(haikuResult, haikuSanity.corrections);
@@ -939,6 +1332,22 @@ async function extractSheetDataInner(
       `escalation_reason:${reasons.join('|')}`,
       'warning:haiku_also_failed_sanity_auto_corrected_from_vol_today',
     ];
+  } else if (haikuSanity.violated) {
+    // Violated but nothing in `corrections` — this is the summary-section case
+    // (no auto-correction path exists for input_total/tower_usage). Haiku's own
+    // re-read STILL falls outside the documented range, so both engines agree on
+    // a number that looks wrong. Surface it rather than shipping it at full
+    // confidence — the summary.input_total/tower_usage mismatch on the 2026-07-02
+    // sheet is exactly what this branch would have caught.
+    console.warn('[extraction] Haiku escalation ALSO fails sanity with no auto-correction available (likely summary section) → flagging for manual review');
+    haikuResult.overall_confidence = Math.min(haikuResult.overall_confidence, 0.55);
+    progress?.('warn', `Claude Haiku ✓ (${haikuMs}ms) — still fails sanity, needs manual review`, 'no independent reading available to auto-correct');
+    haikuResult.flagged_fields = [
+      ...(haikuResult.flagged_fields ?? []),
+      `escalation_engine:haiku`,
+      `escalation_reason:${reasons.join('|')}`,
+      'warning:haiku_also_failed_sanity_no_correction_available_manual_review_required',
+    ];
   } else {
     progress?.('success', `Claude Haiku ✓ (${haikuMs}ms)`, `confidence ${(haikuResult.overall_confidence*100).toFixed(0)}%`);
     haikuResult.flagged_fields = [
@@ -947,5 +1356,5 @@ async function extractSheetDataInner(
       `escalation_reason:${reasons.join('|')}`,
     ];
   }
-  return haikuResult;
+  return { result: haikuResult, openRouterResult };
 }

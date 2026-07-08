@@ -8,15 +8,27 @@
  */
 import { NextRequest } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
-import { extractSheetData } from '@/lib/anthropic';
+import { extractSheetData, hasSanityViolationFlag, SANITY_CONFIDENCE_CEILING } from '@/lib/anthropic';
 import { extractTextFromImage } from '@/lib/googleVision';
 import { extractTextWithOcrSpace } from '@/lib/ocrSpace';
 import { extractTowerTotalsWithQwen } from '@/lib/qwenVision';
 import { extractTextWithMistralOcr } from '@/lib/mistralOcr';
 import { validateExtraction } from '@/lib/extractionValidator';
 import { CostTracker } from '@/lib/costTracker';
+import { getISTDateString } from '@/lib/utils';
 
 const DATE_CONFIDENCE_THRESHOLD = 0.8;
+
+// A technician uploads one sheet per calendar day (see CLAUDE.md). A legitimate
+// reading should never land more than this many days from "today" AND more than
+// this many days from the most recently uploaded sheet's date.
+const PLAUSIBLE_DATE_WINDOW_DAYS = 5;
+
+function daysBetweenDateStrings(a: string, b: string): number {
+  const da = new Date(a + 'T00:00:00Z').getTime();
+  const db = new Date(b + 'T00:00:00Z').getTime();
+  return Math.round(Math.abs(da - db) / 86_400_000);
+}
 
 type LogLevel = 'info' | 'success' | 'warn' | 'error' | 'engine';
 
@@ -219,7 +231,16 @@ export async function POST(request: NextRequest) {
           ocrSpaceResult,
           mistralOcrResult.success ? mistralOcrResult.markdown : undefined
         );
-        extracted.overall_confidence = Math.min(1, Math.max(0, extracted.overall_confidence + validation.confidenceBoost));
+        // See SANITY_CONFIDENCE_CEILING doc comment in anthropic.ts (2026-07-05 incident):
+        // the OCR-corroboration boost below must never be allowed to erase a checkSanity
+        // violation — generic OCR reads the same ambiguous handwriting and will happily
+        // "corroborate" the very digit that's wrong. Check flags BEFORE appending
+        // validation.flags (which use different wording and would never match anyway).
+        const sanityViolated = hasSanityViolationFlag(extracted.flagged_fields);
+        const boostedConfidence = Math.min(1, Math.max(0, extracted.overall_confidence + validation.confidenceBoost));
+        extracted.overall_confidence = sanityViolated
+          ? Math.min(boostedConfidence, SANITY_CONFIDENCE_CEILING)
+          : boostedConfidence;
         extracted.flagged_fields = [...(extracted.flagged_fields ?? []), ...validation.flags];
 
         if (validation.corroboratedNumbers > 0) {
@@ -234,6 +255,55 @@ export async function POST(request: NextRequest) {
         }
         if (validation.visionDate !== null && (extracted.date_confidence ?? 0) < DATE_CONFIDENCE_THRESHOLD) {
           extracted.date = validation.visionDate;
+        }
+
+        // ── Date plausibility check ──────────────────────────────────────────
+        // 2026-07-05 incident: a sheet photographed on 4 Jul 2026 was read as
+        // "2 Apr 2024" at 95% self-reported confidence. Root cause: Mistral OCR's
+        // own transcript misread the handwritten date, and that transcript is
+        // injected into BOTH the primary (Gemini) and escalation (Haiku) prompts
+        // as a "prefer this when unclear" hint — so a single bad transcript can
+        // bias two otherwise-independent engines toward the same wrong answer,
+        // and neither engine's own confidence score catches it because each is
+        // individually "confident" in the same misread digit. Google Vision,
+        // which is supposed to give an independent date corroboration, was also
+        // down (billing disabled) at the time, removing the other safety net.
+        //
+        // This is a plausibility check, not another OCR opinion: the technician
+        // uploads one sheet per calendar day, so a correct date should never be
+        // far from today AND far from the most recently uploaded sheet's date.
+        // If it is, force it through the existing DatePickerScreen regardless of
+        // how confident the AI claims to be.
+        if (extracted.date) {
+          const todayIST = getISTDateString();
+          const daysFromToday = daysBetweenDateStrings(extracted.date, todayIST);
+          const { data: recentSheet } = await supabase
+            .from('daily_sheets')
+            .select('date')
+            .eq('processed_status', 'processed')
+            .eq('superseded', false)
+            .order('date', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          const lastSheetDate = recentSheet?.date ?? null;
+          const daysFromLastSheet = lastSheetDate ? daysBetweenDateStrings(extracted.date, lastSheetDate) : null;
+
+          const implausible =
+            daysFromToday > PLAUSIBLE_DATE_WINDOW_DAYS &&
+            (daysFromLastSheet === null || daysFromLastSheet > PLAUSIBLE_DATE_WINDOW_DAYS);
+
+          if (implausible) {
+            log(
+              'warn',
+              `Date implausible — ${extracted.date} is ${daysFromToday}d from today (${todayIST})`,
+              lastSheetDate ? `and ${daysFromLastSheet}d from last sheet (${lastSheetDate})` : 'no prior sheet on record to compare against'
+            );
+            extracted.date_confidence = Math.min(extracted.date_confidence ?? 0, 0.5);
+            extracted.flagged_fields = [
+              ...(extracted.flagged_fields ?? []),
+              `date_implausible:${daysFromToday}d_from_today`,
+            ];
+          }
         }
 
         const visionValidated = visionResult.words.length > 0 || (ocrSpaceResult?.words.length ?? 0) > 0 || mistralOcrResult.success;
@@ -289,8 +359,19 @@ export async function POST(request: NextRequest) {
         });
 
       } catch (err) {
+        // Log the full detail server-side (Vercel function logs), but never
+        // forward a raw internal error (stack traces, JSON parse errors, SDK
+        // error shapes) straight to the technician's screen — a 2026-07-05
+        // incident showed a raw "Unexpected token '`'... is not valid JSON"
+        // SyntaxError reaching the upload UI verbatim. Known, already-friendly
+        // messages (like the one runExtraction throws on unparseable Haiku
+        // output) are still shown as-is; anything else falls back to a
+        // generic retry prompt.
         console.error('[stream] Unexpected error:', err);
-        send({ type: 'error', message: err instanceof Error ? err.message : 'Unexpected error' });
+        const message = err instanceof Error && /please retry|not configured|failed to/i.test(err.message)
+          ? err.message
+          : 'Something went wrong while reading the sheet. Please try again — if it keeps failing, try a clearer photo or better lighting.';
+        send({ type: 'error', message });
         if (fileName) {
           const supabase = createServerClient();
           await supabase.storage.from('sheet-images').remove([fileName]);

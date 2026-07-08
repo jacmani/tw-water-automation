@@ -1,0 +1,15 @@
+Every morning, across eight hundred and fourteen flats and four towers, one technician fills out a handwritten water meter sheet — and until now, that sheet went out as a single WhatsApp photo, and vanished.
+
+There was no error checking, no history, and no one to ask when the numbers didn't add up.
+
+Introducing Trinity World Water — a smarter way to track it all.
+
+Now there's one dashboard for all four towers: Venus, Mercury, Neptune, and Jupiter. Today alone: five lakh sixty-seven thousand liters in, five lakh seventy-six thousand liters used, and a nine-thousand liter shortfall flagged automatically.
+
+Is water going missing? The system flags it before anyone even calls. Jupiter tower used eighteen percent more than its seven-day average — a possible leak, with an email already sent to the Managing Committee.
+
+Every reading, every day, is recorded and exportable — right down to the meeting where it was last used.
+
+A weekly summary goes out every Monday, and a monthly report on the first of each month — delivered to the committee automatically.
+
+Trinity World Water. Accountability, built in.

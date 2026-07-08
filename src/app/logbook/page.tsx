@@ -29,12 +29,14 @@ const LOC_LABELS: Record<string, string> = {
   'Meter 1': 'Meter 1', 'Meter 2': 'Meter 2', 'Meter 3': 'Meter 3',
 };
 
+// Must match water_level_readings.time_slot CHECK constraint (migration 006 —
+// '6AM'/'12PM'/'6PM'/'12AM', not '06:00'-style).
 const SLOT_LABELS: Record<string, string> = {
-  '06:00': '6 AM', '12:00': '12 PM', '18:00': '6 PM', '00:00': '12 AM',
+  '6AM': '6 AM', '12PM': '12 PM', '6PM': '6 PM', '12AM': '12 AM',
 };
 
 function Val({ v }: { v: number | null | undefined }) {
-  if (v == null) return <span className="text-slate-600">—</span>;
+  if (v == null) return <span className="text-slate-500 dark:text-slate-400">—</span>;
   return <>{v.toLocaleString('en-IN')}</>;
 }
 
@@ -43,7 +45,7 @@ function TableHead({ cols }: { cols: string[] }) {
     <thead>
       <tr>
         {cols.map((c) => (
-          <th key={c} className="text-left text-slate-500 text-xs font-semibold py-2 pr-4 whitespace-nowrap">
+          <th key={c} className="text-left text-slate-500 dark:text-slate-400 text-xs font-semibold py-2 pr-4 whitespace-nowrap">
             {c}
           </th>
         ))}
@@ -54,9 +56,9 @@ function TableHead({ cols }: { cols: string[] }) {
 
 function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden print:border-slate-300 print:rounded-none print:mb-4">
-      <div className="bg-slate-800 px-4 py-2.5 print:bg-slate-100">
-        <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 print:text-slate-700">{title}</p>
+    <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden print:border-slate-300 print:rounded-none print:mb-4">
+      <div className="bg-slate-100 dark:bg-slate-800 px-4 py-2.5 print:bg-slate-100">
+        <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 print:text-slate-700">{title}</p>
       </div>
       <div className="overflow-x-auto">
         <div className="px-4 py-3">{children}</div>
@@ -68,21 +70,21 @@ function SectionCard({ title, children }: { title: string; children: React.React
 function TowerTable({ rows }: { rows: TowerMeterReading[] }) {
   const towers = ['Venus', 'Mercury', 'Neptune', 'Jupiter'];
   return (
-    <table className="w-full text-sm text-slate-300">
+    <table className="w-full text-sm text-slate-700 dark:text-slate-300">
       <TableHead cols={['Tower', 'Type', 'Yest. Reading', 'Today Reading', 'Total (L)', 'Cons. Yest.', 'Cons. Today', 'Diff']} />
-      <tbody className="divide-y divide-slate-800">
+      <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
         {towers.flatMap((tower) =>
           ['DO', 'DR'].map((mt) => {
             const r = rows.find((x) => x.tower === tower && x.meter_type === mt);
             return (
               <tr key={`${tower}_${mt}`} className="text-xs">
-                <td className="py-2 pr-4 font-medium text-white">{tower}</td>
-                <td className="py-2 pr-4 text-slate-400">{mt}</td>
+                <td className="py-2 pr-4 font-medium text-slate-900 dark:text-white">{tower}</td>
+                <td className="py-2 pr-4 text-slate-500 dark:text-slate-400">{mt}</td>
                 <td className="py-2 pr-4 tabular-nums"><Val v={r?.yesterday_reading} /></td>
                 <td className="py-2 pr-4 tabular-nums"><Val v={r?.today_reading} /></td>
                 <td className="py-2 pr-4 tabular-nums"><Val v={r?.total_in_ltrs} /></td>
                 <td className="py-2 pr-4 tabular-nums"><Val v={r?.consumption_yesterday} /></td>
-                <td className="py-2 pr-4 tabular-nums font-semibold text-white"><Val v={r?.consumption_today} /></td>
+                <td className="py-2 pr-4 tabular-nums font-semibold text-slate-900 dark:text-white"><Val v={r?.consumption_today} /></td>
                 <td className="py-2 pr-4 tabular-nums"><Val v={r?.difference} /></td>
               </tr>
             );
@@ -96,18 +98,18 @@ function TowerTable({ rows }: { rows: TowerMeterReading[] }) {
 function SourceTable({ rows }: { rows: InputSourceReading[] }) {
   const order = ['mercury_venus_tanker', 'jupiter_neptune_tanker', 'venus_side_well_123', 'venus_side_well_4', 'neptune_side_well_5', 'neptune_side_well_6', 'open_well'];
   return (
-    <table className="w-full text-sm text-slate-300">
+    <table className="w-full text-sm text-slate-700 dark:text-slate-300">
       <TableHead cols={['Source', 'Yest. Reading', 'Today Reading', 'Cons. Yest.', 'Cons. Today', 'Total']} />
-      <tbody className="divide-y divide-slate-800">
+      <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
         {order.map((src) => {
           const r = rows.find((x) => x.source_name === src);
           return (
             <tr key={src} className="text-xs">
-              <td className="py-2 pr-4 font-medium text-white whitespace-nowrap">{SOURCE_LABELS[src]}</td>
+              <td className="py-2 pr-4 font-medium text-slate-900 dark:text-white whitespace-nowrap">{SOURCE_LABELS[src]}</td>
               <td className="py-2 pr-4 tabular-nums"><Val v={r?.yesterday_reading} /></td>
               <td className="py-2 pr-4 tabular-nums"><Val v={r?.today_reading} /></td>
               <td className="py-2 pr-4 tabular-nums"><Val v={r?.consumption_yesterday} /></td>
-              <td className="py-2 pr-4 tabular-nums font-semibold text-white"><Val v={r?.consumption_today} /></td>
+              <td className="py-2 pr-4 tabular-nums font-semibold text-slate-900 dark:text-white"><Val v={r?.consumption_today} /></td>
               <td className="py-2 pr-4 tabular-nums"><Val v={r?.total} /></td>
             </tr>
           );
@@ -119,17 +121,17 @@ function SourceTable({ rows }: { rows: InputSourceReading[] }) {
 
 function AmenityTable({ rows, type, locs }: { rows: AmenityMeterReading[]; type: string; locs: string[] }) {
   return (
-    <table className="w-full text-sm text-slate-300">
+    <table className="w-full text-sm text-slate-700 dark:text-slate-300">
       <TableHead cols={['Location', 'Yesterday', 'Today', 'Consumption', 'Cumulative']} />
-      <tbody className="divide-y divide-slate-800">
+      <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
         {locs.map((loc) => {
           const r = rows.find((x) => x.amenity_type === type && x.location === loc);
           return (
             <tr key={loc} className="text-xs">
-              <td className="py-2 pr-4 font-medium text-white">{LOC_LABELS[loc]}</td>
+              <td className="py-2 pr-4 font-medium text-slate-900 dark:text-white">{LOC_LABELS[loc]}</td>
               <td className="py-2 pr-4 tabular-nums"><Val v={r?.yesterday} /></td>
               <td className="py-2 pr-4 tabular-nums"><Val v={r?.today} /></td>
-              <td className="py-2 pr-4 tabular-nums font-semibold text-white"><Val v={r?.consumption} /></td>
+              <td className="py-2 pr-4 tabular-nums font-semibold text-slate-900 dark:text-white"><Val v={r?.consumption} /></td>
               <td className="py-2 pr-4 tabular-nums"><Val v={r?.cumulative} /></td>
             </tr>
           );
@@ -140,16 +142,16 @@ function AmenityTable({ rows, type, locs }: { rows: AmenityMeterReading[]; type:
 }
 
 function LevelTable({ rows }: { rows: WaterLevelReading[] }) {
-  const slots = ['06:00', '12:00', '18:00', '00:00'];
+  const slots = ['6AM', '12PM', '6PM', '12AM'];
   return (
-    <table className="w-full text-sm text-slate-300">
+    <table className="w-full text-sm text-slate-700 dark:text-slate-300">
       <TableHead cols={['Time', 'Jup DO%', 'Jup DR%', 'CT%', 'Mer DO%', 'Mer DR%', 'Cum J', 'Cum M', 'Cum V', 'Cum N', 'Cum Tot']} />
-      <tbody className="divide-y divide-slate-800">
+      <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
         {slots.map((slot) => {
           const r = rows.find((x) => x.time_slot === slot);
           return (
             <tr key={slot} className="text-xs">
-              <td className="py-2 pr-3 font-medium text-white whitespace-nowrap">{SLOT_LABELS[slot]}</td>
+              <td className="py-2 pr-3 font-medium text-slate-900 dark:text-white whitespace-nowrap">{SLOT_LABELS[slot]}</td>
               <td className="py-2 pr-3 tabular-nums"><Val v={r?.jupiter_do} /></td>
               <td className="py-2 pr-3 tabular-nums"><Val v={r?.jupiter_dr} /></td>
               <td className="py-2 pr-3 tabular-nums"><Val v={r?.collection_tank} /></td>
@@ -159,7 +161,7 @@ function LevelTable({ rows }: { rows: WaterLevelReading[] }) {
               <td className="py-2 pr-3 tabular-nums"><Val v={r?.cumulative_m} /></td>
               <td className="py-2 pr-3 tabular-nums"><Val v={r?.cumulative_v} /></td>
               <td className="py-2 pr-3 tabular-nums"><Val v={r?.cumulative_n} /></td>
-              <td className="py-2 pr-3 tabular-nums font-semibold text-white"><Val v={r?.cumulative_total} /></td>
+              <td className="py-2 pr-3 tabular-nums font-semibold text-slate-900 dark:text-white"><Val v={r?.cumulative_total} /></td>
             </tr>
           );
         })}
@@ -182,19 +184,19 @@ export default async function LogbookPage({
   const entry = selectedDate ? await getLogEntry(selectedDate) : null;
 
   return (
-    <main className="min-h-screen bg-slate-950 text-white print:bg-white print:text-slate-900">
+    <main className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white print:bg-white print:text-slate-900">
       <div className="print:hidden">
         <Navbar />
       </div>
       <div className="max-w-4xl mx-auto px-4 pt-4 pb-1 flex items-center justify-between print:hidden">
         <div>
-          <h1 className="text-base font-semibold text-slate-300">Water Consumption Log Book</h1>
-          {selectedDate && <p className="text-slate-500 text-xs">{formatDate(selectedDate)}</p>}
+          <h1 className="text-base font-semibold text-slate-700 dark:text-slate-300">Water Consumption Log Book</h1>
+          {selectedDate && <p className="text-slate-500 dark:text-slate-400 text-xs">{formatDate(selectedDate)}</p>}
         </div>
         <div className="flex items-center gap-2">
           <Link
             href="/upload/logbook"
-            className="text-xs border border-slate-700 hover:border-blue-500 text-slate-400 hover:text-white px-3 py-1.5 rounded-lg transition-colors"
+            className="text-xs border border-slate-300 dark:border-slate-700 hover:border-blue-500 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white px-3 py-1.5 rounded-lg transition-colors"
           >
             + Add Entry
           </Link>
@@ -206,12 +208,12 @@ export default async function LogbookPage({
 
         {/* Date picker */}
         <div className="flex items-center gap-3 print:hidden">
-          <label className="text-slate-400 text-sm shrink-0">View date:</label>
+          <label className="text-slate-500 dark:text-slate-400 text-sm shrink-0">View date:</label>
           <form method="GET" className="flex gap-2">
             <select
               name="date"
               defaultValue={selectedDate ?? ''}
-              className="bg-slate-800 border border-slate-700 text-white text-sm rounded-lg px-3 py-2 focus:border-blue-500 focus:outline-none"
+              className="bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white text-sm rounded-lg px-3 py-2 focus:border-blue-500 focus:outline-none"
             >
               <option value="" disabled>Select a date</option>
               {availableDates.map((d) => (
@@ -220,29 +222,29 @@ export default async function LogbookPage({
             </select>
             <button
               type="submit"
-              className="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg transition-colors"
+              className="bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-900 dark:text-white text-sm px-4 py-2 rounded-lg transition-colors"
             >
               Go
             </button>
           </form>
           {availableDates.length === 0 && (
-            <p className="text-slate-500 text-sm">No log entries yet.</p>
+            <p className="text-slate-500 dark:text-slate-400 text-sm">No log entries yet.</p>
           )}
         </div>
 
         {!entry && selectedDate && (
-          <div className="text-center py-16 text-slate-500">
+          <div className="text-center py-16 text-slate-500 dark:text-slate-400">
             <p>No log entry found for {formatDate(selectedDate)}.</p>
-            <Link href="/upload/logbook" className="text-blue-400 hover:text-blue-300 text-sm mt-2 block">
+            <Link href="/upload/logbook" className="text-blue-600 dark:text-blue-400 hover:text-blue-500 dark:hover:text-blue-300 text-sm mt-2 block">
               Enter log data →
             </Link>
           </div>
         )}
 
         {!entry && !selectedDate && (
-          <div className="text-center py-16 text-slate-500">
+          <div className="text-center py-16 text-slate-500 dark:text-slate-400">
             <p>No log entries have been entered yet.</p>
-            <Link href="/upload/logbook" className="text-blue-400 hover:text-blue-300 text-sm mt-2 block">
+            <Link href="/upload/logbook" className="text-blue-600 dark:text-blue-400 hover:text-blue-500 dark:hover:text-blue-300 text-sm mt-2 block">
               Enter today&apos;s log →
             </Link>
           </div>
@@ -251,21 +253,21 @@ export default async function LogbookPage({
         {entry && (
           <>
             {/* Log header info */}
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 print:border-slate-300">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 print:border-slate-300">
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <div>
-                  <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold">Date</p>
-                  <p className="text-white font-semibold">{formatDate(entry.log.log_date)}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wider font-semibold">Date</p>
+                  <p className="text-slate-900 dark:text-white font-semibold">{formatDate(entry.log.log_date)}</p>
                 </div>
                 {entry.log.technician_name && (
                   <div>
-                    <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold">Technician</p>
-                    <p className="text-white font-semibold">{entry.log.technician_name}</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wider font-semibold">Technician</p>
+                    <p className="text-slate-900 dark:text-white font-semibold">{entry.log.technician_name}</p>
                   </div>
                 )}
                 <div>
-                  <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold">FM Sign-off</p>
-                  <p className={`font-semibold ${entry.log.fm_signed ? 'text-emerald-400' : 'text-slate-500'}`}>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wider font-semibold">FM Sign-off</p>
+                  <p className={`font-semibold ${entry.log.fm_signed ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500 dark:text-slate-400'}`}>
                     {entry.log.fm_signed ? '✓ Signed' : 'Pending'}
                   </p>
                 </div>
@@ -286,12 +288,12 @@ export default async function LogbookPage({
                       label: 'Balance',
                       v: entry.inflow_summary.balance,
                       bold: true,
-                      color: entry.inflow_summary.balance != null && entry.inflow_summary.balance < 0 ? 'text-red-400' : 'text-emerald-400',
+                      color: entry.inflow_summary.balance != null && entry.inflow_summary.balance < 0 ? 'text-red-500 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400',
                     },
                   ].map(({ label, v, bold, color }) => (
                     <div key={label}>
-                      <p className="text-slate-500 mb-0.5">{label}</p>
-                      <p className={`text-white ${bold ? 'font-semibold' : ''} ${color ?? ''} tabular-nums`}>
+                      <p className="text-slate-500 dark:text-slate-400 mb-0.5">{label}</p>
+                      <p className={`text-slate-900 dark:text-white ${bold ? 'font-semibold' : ''} ${color ?? ''} tabular-nums`}>
                         <Val v={v} />
                       </p>
                     </div>
@@ -352,8 +354,8 @@ export default async function LogbookPage({
                     { label: 'Cons. Total', v: entry.utility_meters.consumption_total, bold: true },
                   ].map(({ label, v, bold }) => (
                     <div key={label}>
-                      <p className="text-slate-500 mb-0.5">{label}</p>
-                      <p className={`text-white tabular-nums ${bold ? 'font-semibold' : ''}`}><Val v={v} /></p>
+                      <p className="text-slate-500 dark:text-slate-400 mb-0.5">{label}</p>
+                      <p className={`text-slate-900 dark:text-white tabular-nums ${bold ? 'font-semibold' : ''}`}><Val v={v} /></p>
                     </div>
                   ))}
                 </div>
@@ -364,7 +366,7 @@ export default async function LogbookPage({
             <div className="text-center pb-4 print:hidden">
               <Link
                 href={`/upload/logbook?date=${entry.log.log_date}`}
-                className="text-sm text-slate-500 hover:text-slate-300 transition-colors"
+                className="text-sm text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300 transition-colors"
               >
                 Edit this entry →
               </Link>

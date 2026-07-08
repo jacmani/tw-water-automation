@@ -24,11 +24,11 @@ A full-stack web application that replaces the WhatsApp photo dead-end at Trinit
 | Hosting | Vercel | Auto-deploy from GitHub, zero-config Next.js, Hobby plan |
 | **Primary Extractor (FREE)** | **Google Gemini 2.5 Flash** (`gemini-2.5-flash`) | **NEW default.** Free tier 1,500 req/day, no card. Set via `EXTRACTION_PRIMARY=gemini` |
 | Escalation Model (PAID) | Claude Haiku (`claude-haiku-4-5-20251001`) | **Only paid model.** Called only when free engines disagree. **Opus REMOVED** (5× Haiku cost) |
-| Tie-breaker (FREE) | OpenRouter `qwen/qwen2.5-vl-32b-instruct:free` | Free second opinion before paying Haiku. 50 req/day free tier |
-| Parallel Validator (FREE) | Qwen3-VL-8B via HuggingFace Router (Novita) | Different visual encoder, OCR-optimised. Agreement gate vs primary |
-| Handwriting OCR | Mistral OCR 3 (`mistral-ocr-2512`) | 88.9% handwriting accuracy, context-injected into primary extractor |
+| Tie-breaker (FREE) | OpenRouter, rotating free-model roster (see `MODEL_CANDIDATES` in `openRouterVision.ts`) | Free 2nd+3rd opinion before paying Haiku — now reads tower + source + summary fields. Free roster rotates; ~50 req/day (1,000/day after any $10 lifetime top-up) |
+| Parallel Validator (FREE, budget-risk) | Qwen3-VL-8B via HuggingFace Router (Novita) | Different visual encoder, OCR-optimised. Agreement gate vs primary. **NOTE:** HF's free tier is now capped at $0.10/mo in Inference Provider credits (2026), not the old unlimited-but-rate-limited model — check HF billing dashboard periodically (see `docs/ocr-audit-2026-07.md` P0-1) |
+| Handwriting OCR (**always-paid, negligible cost**) | Mistral OCR 3 (`mistral-ocr-2512`) | 88.9% handwriting accuracy, context-injected into primary extractor. Runs on **every** upload regardless of agreement-gate outcome, billed ~$0.002/page — it is NOT a free-tier engine like Gemini/Qwen/OpenRouter, just cheap enough (~$0.73/yr at 1 upload/day) to treat as negligible. Mistral's separate Le Chat free-trial tier (an informal fallback some teams rely on) was retired June 2026 — there is no free path to this engine anymore, only the metered API |
 | Word OCR | Google Vision DOCUMENT_TEXT_DETECTION | Date + number corroboration |
-| Table OCR | OCR.space Engine 2 (`isTable=true`) | Free tier, 500 req/day |
+| Table OCR | OCR.space Engine 3 (`isTable=true`) | Free tier, 500 req/day. Switched from Engine 2 → Engine 3 (July 2026) for better handwriting support — corroboration-only role, low risk |
 | Charts | Recharts | SSR-compatible via 'use client', works with html-to-image |
 | Infographic Export | html-to-image + gif.js | PNG + animated GIF at 2× pixel ratio |
 | Email Alerts | Resend | Spike alerts + weekly + monthly cron reports |
@@ -106,14 +106,15 @@ Phase 1 — Parallel (called by upload route before extractSheetData):
   │
   ├─ Mistral OCR 3 (mistral-ocr-2512)              [src/lib/mistralOcr.ts]
   │    Extracts full sheet as structured Markdown. Purpose-built for handwriting + tables.
-  │    Output is injected into Haiku's context window — Haiku reads image + transcript.
+  │    Output is injected into Haiku's/Gemini's context window as a digit-disambiguation hint.
+  │    ALWAYS PAID (~$0.002/page, ~$0.73/yr) — runs on every upload regardless of gate outcome.
   │    Env: MISTRAL_API_KEY
   │
   ├─ Google Vision (DOCUMENT_TEXT_DETECTION)        [src/lib/googleVision.ts]
   │    Word-level tokens for date + number corroboration in extractionValidator.
   │    Env: GOOGLE_CLOUD_VISION_API_KEY
   │
-  └─ OCR.space Engine 2 (isTable=true)             [src/lib/ocrSpace.ts]
+  └─ OCR.space Engine 3 (isTable=true)             [src/lib/ocrSpace.ts]
        Second word list. Free. Env: OCR_SPACE_API_KEY
 
 Phase 2 — Sequential (inside extractSheetData):

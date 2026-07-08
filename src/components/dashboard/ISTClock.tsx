@@ -22,7 +22,7 @@ export default function ISTClock() {
   }, []);
   if (!display) return null;
   return (
-    <span className="hidden sm:block font-mono text-xs text-slate-400 dark:text-slate-500 tabular-nums select-none">
+    <span className="hidden sm:block font-mono text-xs text-slate-500 dark:text-slate-400 tabular-nums select-none">
       {display}
     </span>
   );

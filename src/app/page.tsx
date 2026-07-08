@@ -1,6 +1,6 @@
 import { getMostRecentSheet, wasSheetUploadedToday, getTowerConsumptionForSheet, getSummaryForSheet, getMostRecentLogDate, getDashboardLogbookData } from '@/lib/supabase';
 import { getTowerDashboardData } from '@/lib/towerData';
-import { TOWERS, formatMediumDate } from '@/lib/utils';
+import { TOWERS, formatMediumDate, getISTDateString } from '@/lib/utils';
 import TowerCard from '@/components/dashboard/TowerCard';
 import TrendChart from '@/components/dashboard/TrendChart';
 import SummaryRow from '@/components/dashboard/SummaryRow';
@@ -11,12 +11,13 @@ import InflowSummaryPanel from '@/components/dashboard/InflowSummaryPanel';
 import WaterLevelsPanel from '@/components/dashboard/WaterLevelsPanel';
 import AmenitiesPanel from '@/components/dashboard/AmenitiesPanel';
 import Navbar from '@/components/Navbar';
+import Badge from '@/components/ui/Badge';
 import type { DashboardData, TrendChartPoint } from '@/types';
 
 export const revalidate = 60;
 
 export default async function Dashboard() {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getISTDateString();
 
   const [recentSheet, hasTodaySheet, recentLogDate] = await Promise.all([
     getMostRecentSheet(),
@@ -83,9 +84,11 @@ export default async function Dashboard() {
   return (
     <main className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white">
       <Navbar />
-      <div className="max-w-4xl mx-auto px-4 pt-4 pb-2 flex items-center justify-between">
+      <div className="max-w-4xl mx-auto px-4 pt-4 pb-2">
         <h1 className="text-base font-semibold text-slate-700 dark:text-slate-300">Dashboard</h1>
-        <ISTClock />
+        {/* Was a ticking clock competing with the page title at equal visual weight
+            (audit M5) — now a small secondary badge underneath instead. */}
+        <div className="mt-0.5"><ISTClock /></div>
       </div>
 
       <div className="max-w-4xl mx-auto px-4 py-5 space-y-6">
@@ -101,12 +104,28 @@ export default async function Dashboard() {
         )}
 
         <section>
-          <p className="text-slate-500 dark:text-slate-400 text-xs font-semibold uppercase tracking-wider mb-3">
-            Tower Consumption — {formatMediumDate(sheetDate)}
-          </p>
+          {/* Primary, daily-use section — larger label + accent border (audit M1) */}
+          <div className="flex items-center gap-2 mb-3 flex-wrap">
+            <p className="section-label section-label--primary">
+              Tower Consumption — {formatMediumDate(sheetDate)}
+            </p>
+            {/* P2-2: data-provenance chip — was there no way to tell, at a glance,
+                whether today's numbers came from the AI extraction or a manual
+                fallback entry, or how confident the pipeline was. One chip here
+                covers the whole tower section since every card below reads from
+                the same sheet. */}
+            {recentSheet && (
+              <Badge variant={recentSheet.date_source === 'manual' ? 'manual' : 'ai'}>
+                {recentSheet.date_source === 'manual' ? '✋ Manual entry' : '✨ AI extracted'}
+                {recentSheet.confidence_score != null && (
+                  <span className="opacity-70">· {(recentSheet.confidence_score * 100).toFixed(0)}%</span>
+                )}
+              </Badge>
+            )}
+          </div>
           <div className="grid grid-cols-2 gap-3">
-            {dashboardData.towers.map((t) => (
-              <TowerCard key={t.tower} data={t} />
+            {dashboardData.towers.map((t, i) => (
+              <TowerCard key={t.tower} data={t} index={i} />
             ))}
           </div>
         </section>
@@ -114,7 +133,7 @@ export default async function Dashboard() {
         {recentLogDate && (
           <>
             <section>
-              <p className="text-slate-500 dark:text-slate-400 text-xs font-semibold uppercase tracking-wider mb-3">
+              <p className="section-label mb-3">
                 Inflow / Usage — {formatMediumDate(recentLogDate)}
               </p>
               <InflowSummaryPanel data={logbookPanelData.inflow} date={null} />
@@ -129,7 +148,7 @@ export default async function Dashboard() {
 
         {chartData.length > 0 && (
           <section>
-            <p className="text-slate-500 dark:text-slate-400 text-xs font-semibold uppercase tracking-wider mb-3">
+            <p className="section-label mb-3">
               7-Day Trend
             </p>
             <TrendChart data={chartData} />
@@ -138,7 +157,7 @@ export default async function Dashboard() {
 
         {dashboardData.has_sheet && (
           <section>
-            <p className="text-slate-500 dark:text-slate-400 text-xs font-semibold uppercase tracking-wider mb-3">
+            <p className="section-label mb-3">
               Download Infographics
             </p>
             <InfographicPanel data={dashboardData} />

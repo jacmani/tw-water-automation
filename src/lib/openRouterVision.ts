@@ -25,47 +25,94 @@ export interface OpenRouterTowerReading {
   total_ltrs: number | null;
 }
 
+export interface OpenRouterSourceReading {
+  location: string; // canonical location name matching template label, e.g. 'Mercury + Venus Tanker'
+  total: number | null;
+}
+
 export interface OpenRouterVisionResult {
-  readings: OpenRouterTowerReading[];
+  readings: OpenRouterTowerReading[];         // 8 tower total_ltrs values
+  sourceReadings: OpenRouterSourceReading[];  // 7 water source total values (Section 2)
+  summaryInputTotal: number | null;           // Section 6 TOTAL COLLECTION
+  summaryTowerUsage: number | null;           // Section 6 TOTAL USAGE
   rawText: string;
   success: boolean;
   model: string;
 }
 
+// Maps this prompt's short JSON key names → canonical location names (matching printed
+// template labels) — same mapping qwenVision.ts uses, kept in sync deliberately so
+// resolveSourceTieBreaker in anthropic.ts can join on `location` across both engines.
+const SOURCE_KEY_MAP: Record<string, string> = {
+  'MV_Tanker':  'Mercury + Venus Tanker',
+  'JN_Tanker':  'Jupiter + Neptune Tanker',
+  'V_Well_123': 'Venus Side Well 1 2 3',
+  'V_Well_4':   'Venus Side Well 4',
+  'N_Well_5':   'Neptune Side Well 5',
+  'N_Well_6':   'Neptune Side Well 6',
+  'Open_Well':  'Open Well',
+};
+
 // OpenRouter's free-model roster ROTATES — slugs disappear without notice (the old
-// qwen/qwen2.5-vl-32b-instruct:free now 404s). So we try an ordered list of currently-
-// live free vision models until one responds, instead of hard-coding a single slug.
-// Verified live against the OpenRouter models API (June 2026). OPENROUTER_MODEL, if set,
-// is tried first.
+// qwen/qwen2.5-vl-32b-instruct:free 404'd, then nvidia/nemotron-nano-12b-v2-vl:free
+// also went dark). So we try an ordered list of currently-live free vision models
+// until one responds, instead of hard-coding a single slug. Verified live against
+// the OpenRouter models API (July 2026). OPENROUTER_MODEL, if set, is tried first.
+// NOTE: this list WILL go stale again — recheck https://openrouter.ai/models?
+// fmt=cards&max_price=0&modality=text%2Bimage-%3Etext periodically (see
+// docs/ocr-audit-2026-07.md P0-2).
 const MODEL_CANDIDATES = [
   process.env.OPENROUTER_MODEL,
-  'nvidia/nemotron-nano-12b-v2-vl:free',  // document/OCR-oriented VL, free
-  'google/gemma-4-31b-it:free',            // Gemma 4 vision, free
-  'google/gemma-4-26b-a4b-it:free',
+  'google/gemma-4-31b-it:free',                        // Gemma 4 vision, free
+  'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', // text+image+video+audio, free
+  'google/gemma-4-26b-a4b-it:free',                     // Gemma 4 MoE vision variant, free
 ].filter(Boolean) as string[];
 
 const EMPTY_RESULT: OpenRouterVisionResult = {
   readings: [],
+  sourceReadings: [],
+  summaryInputTotal: null,
+  summaryTowerUsage: null,
   rawText: '',
   success: false,
   model: MODEL_CANDIDATES[0] ?? 'none',
 };
 
-// Same focused prompt as Qwen — only the 8 tower totals, tight token budget.
+// Extended (mirrors qwenVision.ts's v3.1 expansion — see docs/ocr-audit-2026-07.md P0-3):
+// this free tie-breaker used to read ONLY the 8 tower totals, which meant Section 2
+// (water sources) and Section 6 (summary/accountability totals) — the two sections
+// responsible for both documented production incidents — never got a genuine 3-way
+// free tie-break, only a 2-way Qwen-vs-primary check before falling straight to paid
+// escalation. Now reads all three sections so resolveSourceTieBreaker /
+// resolveSummaryTieBreaker in anthropic.ts have something to compare against.
 const PROMPT = `You are reading a handwritten daily water meter sheet from India.
 
-Look ONLY at Section 1 — the Tower Section at the TOP of the sheet.
-It has 4 towers: Venus, Mercury, Neptune, Jupiter.
-Each tower has 2 rows: DO (Domestic/overhead) and DR (Drinking water).
-Find the "Total Litres" column (3rd column from left) for each of the 8 rows.
+Read THREE sections and return ALL values as plain integers (no commas, no units).
+Indian number format: 1,76,000 = 176000 | 1,98,000 = 198000 | 2,54,000 = 254000
+
+=== SECTION 1 — TOWER SECTION (top of sheet) ===
+4 towers: Venus, Mercury, Neptune, Jupiter. Each has 2 rows: DO and DR.
+Find the "Total Litres" column (3rd column) for each of the 8 rows.
 IMPORTANT: this is a number written directly on the sheet — transcribe the actual
 handwritten digits. Do NOT calculate it from the yesterday/today meter columns;
 the technician's written total does not always match (today − yesterday), and
 substituting a computed value for what's actually written is an extraction error.
 
-CRITICAL — Indian number format: commas follow Indian convention.
-Examples: 1,76,000 = 176000 | 1,98,000 = 198000 | 2,54,000 = 254000
-Output ALL values as plain integers (no commas, no units).
+=== SECTION 2 — SOURCE/LOCATION SECTION (middle of sheet) ===
+7 source rows. Find the "Total" column (rightmost data column) for each:
+  MV_Tanker  = Mercury + Venus Tanker   (row 1)
+  JN_Tanker  = Jupiter + Neptune Tanker (row 2)
+  V_Well_123 = Venus Side Well 1 2 3    (row 3)
+  V_Well_4   = Venus Side Well 4        (row 4)
+  N_Well_5   = Neptune Side Well 5      (row 5)
+  N_Well_6   = Neptune Side Well 6      (row 6)
+  Open_Well  = Open Well                (row 7)
+
+=== SECTION 6 — TOTAL INFLOW TABLE (bottom of sheet) ===
+A table with columns: WATER | WELL | TANKER | TOTAL COLLECTION | TOTAL USAGE | BALANCE
+Read the MAIN data row (not the CUMULATIVE row below it):
+  input_total  = TOTAL COLLECTION column (grand total, the largest number)
+  tower_usage  = TOTAL USAGE column
 
 CRITICAL — Handwritten digit confusion (look carefully):
 • The digit 7 with a short crossbar looks identical to 1. Re-examine any number
@@ -75,17 +122,22 @@ CRITICAL — Handwritten digit confusion (look carefully):
 • 2 vs 5 — a closed-loop "2" can look like "5". DR (drinking water) totals are
   normally only 5,000–40,000 — if a DR total looks like 50,000+, re-check whether
   the leading digit is really "2" not "5".
+• Read each digit of a number individually, left to right, before combining them
+  into the final integer — digits in a tightly-written row can visually bleed
+  into each other, and reading the whole string as one shape is how "1,76,000"
+  becomes "1,16,000" or "3,62,000" becomes "9,62,000".
 
-Return ONLY this JSON object, no explanation, no markdown:
+Return ONLY this JSON, no explanation, no markdown:
 {
-  "Venus_DO": <integer or null>,
-  "Venus_DR": <integer or null>,
-  "Mercury_DO": <integer or null>,
-  "Mercury_DR": <integer or null>,
-  "Neptune_DO": <integer or null>,
-  "Neptune_DR": <integer or null>,
-  "Jupiter_DO": <integer or null>,
-  "Jupiter_DR": <integer or null>
+  "Venus_DO": <integer or null>, "Venus_DR": <integer or null>,
+  "Mercury_DO": <integer or null>, "Mercury_DR": <integer or null>,
+  "Neptune_DO": <integer or null>, "Neptune_DR": <integer or null>,
+  "Jupiter_DO": <integer or null>, "Jupiter_DR": <integer or null>,
+  "MV_Tanker": <integer or null>, "JN_Tanker": <integer or null>,
+  "V_Well_123": <integer or null>, "V_Well_4": <integer or null>,
+  "N_Well_5": <integer or null>, "N_Well_6": <integer or null>,
+  "Open_Well": <integer or null>,
+  "input_total": <integer or null>, "tower_usage": <integer or null>
 }`;
 
 export async function extractTowerTotalsWithOpenRouter(
@@ -119,7 +171,7 @@ export async function extractTowerTotalsWithOpenRouter(
         },
         body: JSON.stringify({
           model,
-          max_tokens: 300,
+          max_tokens: 550, // raised from 300 — now 18 values (8 tower + 7 source + 2 summary + 1 buffer), not 8
           temperature: 0,
           messages: [
             {
@@ -157,6 +209,8 @@ export async function extractTowerTotalsWithOpenRouter(
       }
 
       const parsed = JSON.parse(jsonMatch[0]) as Record<string, number | null>;
+
+      // ── Tower readings (Section 1) ────────────────────────────────────────
       const towers = ['Venus', 'Mercury', 'Neptune', 'Jupiter'] as const;
       const types = ['DO', 'DR'] as const;
       const readings: OpenRouterTowerReading[] = [];
@@ -167,8 +221,20 @@ export async function extractTowerTotalsWithOpenRouter(
         }
       }
 
-      console.log(`[openrouter] ✓ ${model}:`, readings.map(r => `${r.tower} ${r.type}=${r.total_ltrs}`).join(', '));
-      return { readings, rawText: raw, success: true, model };
+      // ── Source readings (Section 2) — new ───────────────────────────────
+      const sourceReadings: OpenRouterSourceReading[] = [];
+      for (const [key, canonicalLocation] of Object.entries(SOURCE_KEY_MAP)) {
+        const val = parsed[key];
+        sourceReadings.push({ location: canonicalLocation, total: typeof val === 'number' ? val : null });
+      }
+
+      // ── Summary fields (Section 6) — new ────────────────────────────────
+      const summaryInputTotal = typeof parsed['input_total'] === 'number' ? parsed['input_total'] : null;
+      const summaryTowerUsage = typeof parsed['tower_usage'] === 'number' ? parsed['tower_usage'] : null;
+
+      console.log(`[openrouter] ✓ ${model}: towers`, readings.map(r => `${r.tower} ${r.type}=${r.total_ltrs}`).join(', '));
+      console.log(`[openrouter] ✓ ${model}: sources ${sourceReadings.filter(s => s.total != null).length}/7 | summary input=${summaryInputTotal} usage=${summaryTowerUsage}`);
+      return { readings, sourceReadings, summaryInputTotal, summaryTowerUsage, rawText: raw, success: true, model };
     } catch (err) {
       clearTimeout(timer);
       // AbortError = timeout; other errors = network/parse issues. Either way, try next.

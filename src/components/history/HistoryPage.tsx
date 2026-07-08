@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import Navbar from '@/components/Navbar';
 import { createClient } from '@supabase/supabase-js';
 import type { TowerName } from '@/types';
-import { TOWER_COLORS } from '@/lib/utils';
+import { TOWER_COLORS, getISTDateString } from '@/lib/utils';
 import { computeFlag } from './flagging';
 import { buildCsv, downloadCsv } from './csvExport';
 import type { SheetRecord, HTowerRow, HSourceRow, HSummary } from './types';
@@ -13,9 +13,12 @@ import HeatmapView from './HeatmapView';
 
 const TOWERS: TowerName[] = ['Venus', 'Mercury', 'Neptune', 'Jupiter'];
 
-function todayStr(): string { return new Date().toISOString().split('T')[0]; }
+// IST-anchored, not viewer's browser timezone — a committee member checking from
+// outside India should see the same "today" as everyone else (same fix already
+// applied to MissingSheetAlert for the same reason).
+function todayStr(): string { return getISTDateString(); }
 function daysAgoStr(n: number): string {
-  const d = new Date(Date.now() - n * 86_400_000);
+  const d = new Date(Date.now() + 5.5 * 3600000 - n * 86_400_000);
   return d.toISOString().split('T')[0];
 }
 
@@ -128,29 +131,29 @@ export default function HistoryPage() {
 
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2">
-              <label className="text-slate-400 dark:text-slate-500 text-xs">From</label>
+              <label className="text-slate-500 dark:text-slate-400 text-xs">From</label>
               <input type="date" value={startDate} max={endDate} onChange={e => setStartDate(e.target.value)}
                 className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm text-slate-900 dark:text-slate-200 px-2 py-1.5 focus:outline-none focus:border-blue-500 dark:focus:border-blue-600" />
-              <label className="text-slate-400 dark:text-slate-500 text-xs">To</label>
+              <label className="text-slate-500 dark:text-slate-400 text-xs">To</label>
               <input type="date" value={endDate} min={startDate} max={todayStr()} onChange={e => setEndDate(e.target.value)}
                 className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm text-slate-900 dark:text-slate-200 px-2 py-1.5 focus:outline-none focus:border-blue-500 dark:focus:border-blue-600" />
             </div>
             <div className="flex gap-1">
               {[7, 30, 90].map(d => (
                 <button key={d} onClick={() => applyPreset(d)}
-                  className="px-2 py-1 rounded text-xs text-slate-400 dark:text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+                  className="px-2 py-1 rounded text-xs text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
                   {d}d
                 </button>
               ))}
               <button onClick={() => applyPreset(180)}
-                className="px-2 py-1 rounded text-xs text-slate-400 dark:text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+                className="px-2 py-1 rounded text-xs text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
                 6m
               </button>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-slate-400 dark:text-slate-500 text-xs">Tower:</span>
+            <span className="text-slate-500 dark:text-slate-400 text-xs">Tower:</span>
             {(['All', ...TOWERS] as const).map(t => (
               <button key={t} onClick={() => setTowerFilter(t)}
                 className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors border ${
@@ -167,14 +170,14 @@ export default function HistoryPage() {
         </div>
 
         {!loading && flagCounts && sheets && sheets.length > 0 && (
-          <div className="flex items-center gap-4 text-xs text-slate-400 dark:text-slate-500">
+          <div className="flex items-center gap-4 text-xs text-slate-500 dark:text-slate-400">
             <span>{sheets.length} sheets loaded</span>
             {flagCounts.ok > 0 && <span className="text-emerald-600 dark:text-emerald-500">✓ {flagCounts.ok} OK</span>}
             {flagCounts.flagged > 0 && <span className="text-amber-500">⚠ {flagCounts.flagged} flagged</span>}
           </div>
         )}
 
-        {loading && <div className="text-center py-16 text-slate-400 dark:text-slate-500 text-sm">Loading…</div>}
+        {loading && <div className="text-center py-16 text-slate-500 dark:text-slate-400 text-sm">Loading…</div>}
 
         {error && (
           <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800/50 rounded-xl p-4">

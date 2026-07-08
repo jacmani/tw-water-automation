@@ -4,8 +4,10 @@ interface Props {
   data: WaterLevelReading | null;
 }
 
+// Must match water_level_readings.time_slot CHECK constraint ('6AM'/'12PM'/'6PM'/'12AM'
+// — see migration 006_fix_check_constraints.sql).
 const SLOT_LABEL: Record<string, string> = {
-  '06:00': '6 AM', '12:00': '12 PM', '18:00': '6 PM', '00:00': '12 AM',
+  '6AM': '6 AM', '12PM': '12 PM', '6PM': '6 PM', '12AM': '12 AM',
 };
 
 function LevelBar({ label, pct }: { label: string; pct: number | null }) {
@@ -30,7 +32,7 @@ export default function WaterLevelsPanel({ data }: Props) {
     return (
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
         <p className="text-slate-500 dark:text-slate-400 text-xs font-semibold uppercase tracking-wider mb-2">Tank Levels</p>
-        <p className="text-slate-400 dark:text-slate-600 text-sm">No level readings for this date</p>
+        <p className="text-slate-500 dark:text-slate-400 text-sm">No level readings for this date</p>
       </div>
     );
   }
@@ -48,7 +50,7 @@ export default function WaterLevelsPanel({ data }: Props) {
     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
       <div className="flex items-center justify-between mb-3">
         <p className="text-slate-500 dark:text-slate-400 text-xs font-semibold uppercase tracking-wider">Tank Levels</p>
-        <span className="text-slate-400 dark:text-slate-500 text-xs">{slotLabel} reading</span>
+        <span className="text-slate-500 dark:text-slate-400 text-xs">{slotLabel} reading</span>
       </div>
       <div className="space-y-2.5">
         {levels.map(({ label, pct }) => (
@@ -57,7 +59,7 @@ export default function WaterLevelsPanel({ data }: Props) {
       </div>
       {data.cumulative_total != null && (
         <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800 flex justify-between text-xs">
-          <span className="text-slate-400 dark:text-slate-500">Cumulative Total</span>
+          <span className="text-slate-500 dark:text-slate-400">Cumulative Total</span>
           <span className="text-slate-700 dark:text-slate-300 font-medium">{data.cumulative_total.toLocaleString('en-IN')} kL</span>
         </div>
       )}

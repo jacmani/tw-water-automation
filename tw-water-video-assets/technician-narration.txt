@@ -1,0 +1,19 @@
+This is the Trinity World Water System — built for the FM office and the meter-reading team.
+
+Step one: photograph the daily water sheet. Use natural light, lay it flat, and make sure all sections are visible. No login needed.
+
+Step two: the system reads it automatically. This takes fifteen to thirty seconds, so please wait. You'll see the OCR engine reading the sheet, the date getting detected — for example, 4th July 2026 — and readings coming in, like Venus DO at one lakh twenty-three thousand liters. If a reading like Neptune DR looks uncertain, it gets flagged for review. The system never silently guesses — low-confidence readings are flagged, not invented.
+
+Step three-a: if everything looks good, just confirm the date. Tap "yes, this is correct," and you're done — it's saved, and the dashboard updates.
+
+Step three-b, and this is the important part: what happens when the system isn't sure. You might see a red flag, like "Neptune DR: low confidence, please check and re-enter" — go back to the sheet, check that section, and re-enter the correct value. Or you might see an amber flag, like "Venus Tanker total, auto-corrected." Remember: red means you need to check it manually; amber means the system already fixed it for you.
+
+If the photo isn't working — too blurry, or the reading fails entirely — there's always a fallback: the Log Book form. Fill in tower meter readings, input sources, and water levels by hand, and submit.
+
+If something looks wrong after you've submitted, check the Log Book — it shows the full reading table for the day, and you can edit any entry. The dashboard's summary row shows input versus tower usage, and when that difference is green, the day is balanced.
+
+Automatic alerts go out when a tower uses fifteen percent or more above its seven-day average, when the input and output balance shows an unexplained gap, or when a reading looks like a data entry error. These are automatic — you don't need to do anything extra.
+
+Your daily job is just one photo upload. Everything else is automatic: the dashboard updates right away, a weekly summary goes out every Monday morning, and a monthly report goes out on the first of each month.
+
+Questions? Ask the FM office. This is the Trinity World Water System — tw-water-automation dot vercel dot app.

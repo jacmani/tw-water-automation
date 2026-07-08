@@ -1,3 +1,5 @@
+import { extractDateDDMMYYYY } from './dateParsing';
+
 export interface OcrSpaceResult {
   fullText: string;
   words: string[];
@@ -59,7 +61,13 @@ export async function extractTextWithOcrSpace(
     const params = new URLSearchParams({
       apikey: apiKey,
       base64Image: dataUri,
-      OCREngine: '2',
+      // Engine 3 is OCR.space's newest engine and claims meaningfully better
+      // handwriting support than Engine 2 (see docs/ocr-audit-2026-07.md quick win
+      // #5). This engine's role in the pipeline is corroboration-only (extractionValidator
+      // just checks whether its numbers overlap with the primary extraction), so a
+      // worse-case result here only means fewer corroboration hits, not a wrong value
+      // reaching the DB — low-risk to try.
+      OCREngine: '3',
       filetype,
       isOverlayRequired: 'true', // get word-level data
       detectOrientation: 'true',
@@ -115,7 +123,7 @@ export async function extractTextWithOcrSpace(
       words.push(...fullText.split(/\s+/).filter(Boolean));
     }
 
-    const detectedDate = extractDate(fullText);
+    const detectedDate = extractDateDDMMYYYY(fullText);
     console.log(`[ocr.space] words=${words.length}, detectedDate=${detectedDate ?? 'none'}`);
 
     return { fullText, words, detectedDate, confidence: 0.85, exitCode };
@@ -123,21 +131,4 @@ export async function extractTextWithOcrSpace(
     console.error('[ocr.space] Unexpected error:', err);
     return EMPTY_RESULT;
   }
-}
-
-function extractDate(text: string): string | null {
-  // DD/MM/YYYY or D/M/YYYY
-  let m = text.match(/\b(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})\b/);
-  if (m) {
-    const [, d, mo, y] = m;
-    return `${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`;
-  }
-  // DD/MM/YY
-  m = text.match(/\b(\d{1,2})[/\-](\d{1,2})[/\-](\d{2})\b/);
-  if (m) {
-    const [, d, mo, y] = m;
-    const year = parseInt(y, 10) < 50 ? `20${y}` : `19${y}`;
-    return `${year}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`;
-  }
-  return null;
 }

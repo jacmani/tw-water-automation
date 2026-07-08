@@ -20,7 +20,7 @@ export default function AmenitiesPanel({ data }: Props) {
     return (
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
         <p className="text-slate-500 dark:text-slate-400 text-xs font-semibold uppercase tracking-wider mb-2">Amenities</p>
-        <p className="text-slate-400 dark:text-slate-600 text-sm">No amenity data for this date</p>
+        <p className="text-slate-500 dark:text-slate-400 text-sm">No amenity data for this date</p>
       </div>
     );
   }
@@ -36,7 +36,7 @@ export default function AmenitiesPanel({ data }: Props) {
       <div className="grid grid-cols-2 gap-3">
         {carWash.length > 0 && (
           <div>
-            <p className="text-slate-400 dark:text-slate-500 text-xs mb-2">Car Wash</p>
+            <p className="text-slate-500 dark:text-slate-400 text-xs mb-2">Car Wash</p>
             <div className="space-y-1">
               {carWash.map((r) => (
                 <div key={r.location} className="flex justify-between text-xs">
@@ -53,7 +53,7 @@ export default function AmenitiesPanel({ data }: Props) {
         )}
         {pool.length > 0 && (
           <div>
-            <p className="text-slate-400 dark:text-slate-500 text-xs mb-2">Swimming Pool</p>
+            <p className="text-slate-500 dark:text-slate-400 text-xs mb-2">Swimming Pool</p>
             <div className="space-y-1">
               {pool.map((r) => (
                 <div key={r.location} className="flex justify-between text-xs">

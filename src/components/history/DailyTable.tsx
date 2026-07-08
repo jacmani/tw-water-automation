@@ -17,17 +17,21 @@ function numFmt(n: number | null | undefined): string {
   return n.toLocaleString('en-IN');
 }
 
+// Tapping the badge bubbles up to the row's onClick and expands the row, where
+// the full detail is already shown (see the amber block below the tables) —
+// so this works on touch without relying on a hover-only `title=` attribute.
+// `aria-label` keeps the full text available to screen readers too.
 function FlagBadge({ flag }: { flag: Flag }) {
   if (flag.type === 'ok') {
     return (
-      <span title={flag.detail} className="inline-block px-2 py-0.5 rounded text-xs font-semibold bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/60 cursor-help">
+      <span aria-label={flag.detail} className="inline-block px-2 py-0.5 rounded text-xs font-semibold bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/60 cursor-pointer">
         ✓ OK
       </span>
     );
   }
   return (
-    <span title={flag.detail}
-      className={`inline-block px-2 py-0.5 rounded text-xs font-semibold cursor-help border ${
+    <span aria-label={flag.detail}
+      className={`inline-block px-2 py-0.5 rounded text-xs font-semibold cursor-pointer border ${
         flag.type === 'digit_drop' || flag.type === 'source_duplication'
           ? 'bg-red-50 dark:bg-red-900/40 text-red-600 dark:text-red-300 border-red-200 dark:border-red-800/60'
           : flag.type === 'summary_misread'
@@ -39,28 +43,45 @@ function FlagBadge({ flag }: { flag: Flag }) {
   );
 }
 
+// Tap-to-toggle so the confidence % is reachable on touch devices, not just
+// via hover title= (P1-5). stopPropagation keeps the tap from also toggling
+// the parent row open/closed.
 function ConfValue({ value, confidence, formatter = numFmt }: {
   value: number | null | undefined;
   confidence: number | null | undefined;
   formatter?: (n: number | null | undefined) => string;
 }) {
+  const [show, setShow] = useState(false);
   const low = confidence != null && confidence < 0.8;
+  if (confidence == null) return <span>{formatter(value)}</span>;
   return (
-    <span title={confidence != null ? `Confidence: ${(confidence * 100).toFixed(0)}%` : undefined}
-      className={low ? 'italic opacity-50 cursor-help' : ''}>
-      {formatter(value)}
-      {low && <sup className="ml-0.5 text-amber-500 text-[9px]">⚠</sup>}
+    <span className="inline-block text-right">
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setShow((s) => !s); }}
+        aria-expanded={show}
+        aria-label={`${formatter(value)}${low ? ` — confidence ${(confidence * 100).toFixed(0)}%, tap for details` : ''}`}
+        className={`${low ? 'italic opacity-50' : ''} ${low ? 'cursor-pointer' : 'cursor-default'}`}
+      >
+        {formatter(value)}
+        {low && <sup className="ml-0.5 text-amber-500 text-[9px]">⚠</sup>}
+      </button>
+      {show && low && (
+        <span className="block text-[10px] font-normal not-italic opacity-100 text-amber-600 dark:text-amber-400 whitespace-nowrap">
+          Confidence: {(confidence * 100).toFixed(0)}%
+        </span>
+      )}
     </span>
   );
 }
 
 function SourcesSection({ sources }: { sources: HSourceRow[] }) {
-  if (!sources.length) return <p className="text-slate-400 dark:text-slate-500 text-xs italic">No source rows extracted.</p>;
+  if (!sources.length) return <p className="text-slate-500 dark:text-slate-400 text-xs italic">No source rows extracted.</p>;
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
         <thead>
-          <tr className="text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+          <tr className="text-slate-500 dark:text-slate-400 uppercase tracking-wider">
             <th className="text-left py-1 pr-3 font-semibold">Location</th>
             <th className="text-right py-1 px-2 font-semibold">Yesterday</th>
             <th className="text-right py-1 px-2 font-semibold">Today</th>
@@ -83,12 +104,12 @@ function SourcesSection({ sources }: { sources: HSourceRow[] }) {
 }
 
 function TowerSection({ rows, towerFilter }: { rows: HTowerRow[]; towerFilter: TowerName | 'All' }) {
-  if (!rows.length) return <p className="text-slate-400 dark:text-slate-500 text-xs italic">No tower consumption rows extracted.</p>;
+  if (!rows.length) return <p className="text-slate-500 dark:text-slate-400 text-xs italic">No tower consumption rows extracted.</p>;
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
         <thead>
-          <tr className="text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+          <tr className="text-slate-500 dark:text-slate-400 uppercase tracking-wider">
             <th className="text-left py-1 pr-2 font-semibold">Tower</th>
             <th className="text-left py-1 pr-3 font-semibold">Type</th>
             <th className="text-right py-1 px-2 font-semibold">Total</th>
@@ -131,15 +152,24 @@ function TableRow({ sheet, towerFilter }: { sheet: SheetRecord; towerFilter: Tow
   const sum = sheet.summary;
   const diffVal = sum?.diff ?? null;
   const diffColor =
-    diffVal == null ? 'text-slate-400'
+    diffVal == null ? 'text-slate-500 dark:text-slate-400'
     : Math.abs(diffVal) > 50_000 ? 'text-red-500 dark:text-red-400'
     : Math.abs(diffVal) > 10_000 ? 'text-amber-500 dark:text-amber-400'
     : 'text-slate-500 dark:text-slate-400';
 
   return (
     <>
-      <tr className="border-b border-slate-100 dark:border-slate-800/50 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors cursor-pointer"
-        onClick={() => setOpen(o => !o)}>
+      <tr
+        className="border-b border-slate-100 dark:border-slate-800/50 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors cursor-pointer focus-visible:bg-slate-50 dark:focus-visible:bg-slate-800/30 focus-ring-tight"
+        onClick={() => setOpen(o => !o)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(o => !o); }
+        }}
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        aria-label={`${formatMediumDate(sheet.date)} — ${open ? 'collapse' : 'expand'} full detail`}
+      >
         <td className="px-4 py-3 text-slate-800 dark:text-slate-200 text-sm font-medium whitespace-nowrap">
           <span>{formatMediumDate(sheet.date)}</span>
           {sheet.date_source === 'manual' && (
@@ -155,7 +185,7 @@ function TableRow({ sheet, towerFilter }: { sheet: SheetRecord; towerFilter: Tow
           {diffVal != null ? `${diffVal > 0 ? '+' : ''}${kl(diffVal)}` : '—'}
         </td>
         <td className="px-4 py-3"><FlagBadge flag={sheet.flag} /></td>
-        <td className="px-4 py-3 text-slate-400 text-right w-8">
+        <td className="px-4 py-3 text-slate-500 dark:text-slate-400 text-right w-8">
           <span className="inline-block transition-transform duration-150" style={{ transform: open ? 'rotate(90deg)' : 'none' }}>▶</span>
         </td>
       </tr>
@@ -165,11 +195,11 @@ function TableRow({ sheet, towerFilter }: { sheet: SheetRecord; towerFilter: Tow
           <td colSpan={6} className="px-4 py-4">
             <div className="space-y-5">
               <div>
-                <p className="text-slate-400 dark:text-slate-500 text-xs font-semibold uppercase tracking-wider mb-2">Water Sources</p>
+                <p className="text-slate-500 dark:text-slate-400 text-xs font-semibold uppercase tracking-wider mb-2">Water Sources</p>
                 <SourcesSection sources={sheet.water_sources} />
               </div>
               <div>
-                <p className="text-slate-400 dark:text-slate-500 text-xs font-semibold uppercase tracking-wider mb-2">
+                <p className="text-slate-500 dark:text-slate-400 text-xs font-semibold uppercase tracking-wider mb-2">
                   Tower Consumption
                   {towerFilter !== 'All' && <span className="normal-case text-slate-500 dark:text-slate-600 ml-1">(other towers dimmed)</span>}
                 </p>
@@ -199,7 +229,7 @@ export default function DailyTable({ sheets, towerFilter }: Props) {
   if (!sheets.length) {
     return (
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-10 text-center">
-        <p className="text-slate-400 dark:text-slate-500 text-sm">No processed sheets found for this date range.</p>
+        <p className="text-slate-500 dark:text-slate-400 text-sm">No processed sheets found for this date range.</p>
       </div>
     );
   }
@@ -227,7 +257,7 @@ export default function DailyTable({ sheets, towerFilter }: Props) {
 
       {totalPages > 1 && (
         <div className="flex items-center justify-between mt-4">
-          <p className="text-slate-400 dark:text-slate-500 text-xs">{sheets.length} rows · page {safePage} of {totalPages}</p>
+          <p className="text-slate-500 dark:text-slate-400 text-xs">{sheets.length} rows · page {safePage} of {totalPages}</p>
           <div className="flex gap-2">
             <button onClick={() => setPage(1)} disabled={safePage === 1} className={btnCls}>««</button>
             <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={safePage === 1} className={btnCls}>‹ Prev</button>
