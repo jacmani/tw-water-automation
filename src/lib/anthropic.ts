@@ -1227,7 +1227,10 @@ async function extractSheetDataInner(
   const ocrTranscript = mistralOcr?.success ? mistralOcr.markdown : undefined;
 
   // Record the free engines that already ran in Phase 1 (parallel, by the route).
-  if (qwenResult?.success) cost?.addFree('Qwen3-VL-8B (validator)', 'free tier');
+  // qwenResult.model now reflects whichever {model, provider} candidate actually
+  // succeeded (see qwenVision.ts P0-1 fix) — not necessarily Qwen itself anymore,
+  // so label from the result rather than hard-coding.
+  if (qwenResult?.success) cost?.addFree(`HF parallel validator (${qwenResult.model})`, 'free tier — shared HF credit');
   if (mistralOcr?.success) cost?.addFree('Mistral OCR 3 (transcript)', 'free/near-free');
 
   // ── Phase 2.1: primary extraction (free Gemini by default) ──────────────────
@@ -1240,8 +1243,8 @@ async function extractSheetDataInner(
   const qwenSummaryInputTotal = qwenResult?.success ? (qwenResult.summaryInputTotal ?? null) : null;
   const qwenSummaryTowerUsage = qwenResult?.success ? (qwenResult.summaryTowerUsage ?? null) : null;
 
-  // Check for disagreements across all three sections Qwen now reads.
-  progress?.('info', 'Agreement gate — cross-checking with Qwen3-VL…', 'comparing tower totals, sources, summary');
+  // Check for disagreements across all three sections the HF validator now reads.
+  progress?.('info', `Agreement gate — cross-checking with ${qwenResult?.success ? qwenResult.model : 'HF validator'}…`, 'comparing tower totals, sources, summary');
   const qwenTowerDisagreements = findDisagreements(result, qwenReadings, 'primary', 'qwen');
   const qwenSourceDisagreements = findSourceDisagreements(result, qwenSourceReadings, 'primary', 'qwen');
   const qwenSummaryDisagreements = findSummaryDisagreements(result, qwenSummaryInputTotal, qwenSummaryTowerUsage, 'primary', 'qwen');
