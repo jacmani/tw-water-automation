@@ -981,10 +981,51 @@ function findSummaryDisagreements(
 }
 
 /**
+ * Detect whole-section extraction MISSES in the primary result — as opposed to
+ * findSourceDisagreements/findSummaryDisagreements above, which only fire on a VALUE
+ * MISMATCH between primary and another engine. If primary returns null for a field and
+ * the other engine ALSO returns null (both genuinely failed to read that part of the
+ * sheet), there is no "disagreement" by definition — the two nulls trivially agree —
+ * so the old checks never looked at it, the agreement gate passed, and the sheet
+ * shipped with the gap silently unfilled.
+ *
+ * Real incident (2026-07-08): Gemini returned overall_confidence=0.9 with all 7
+ * water_sources totals null and summary.input_total/tower_usage null. The HF validator
+ * (that day's Gemma-4-31B fallback) also returned 0/7 sources and a null summary for
+ * the same image. Zero disagreements were ever detected, so Phase 2.3 (free
+ * tie-breaker) and Phase 2.4 (paid escalation) never even ran — the dashboard shipped
+ * with Section 2 and Section 6 entirely blank and no indication anything was wrong
+ * beyond the dashes. This function looks at the PRIMARY result alone (no comparison
+ * needed) so a coverage gap is caught even when every other engine agrees by omission.
+ */
+function findCoverageGaps(result: ExtractionResult): string[] {
+  const gaps: string[] = [];
+  const sources = result.water_sources ?? [];
+  const readSources = sources.filter(s => s.total != null).length;
+  if (sources.length > 0 && readSources === 0) {
+    gaps.push(`water_sources: 0/${sources.length} rows read (Section 2 miss)`);
+  }
+  if (result.summary && result.summary.input_total == null) {
+    gaps.push('summary.input_total missing (Section 6 miss)');
+  }
+  if (result.summary && result.summary.tower_usage == null) {
+    gaps.push('summary.tower_usage missing (Section 6 miss)');
+  }
+  return gaps;
+}
+
+/**
  * Tie-breaker resolution: for each disputed tower row, check whether the OpenRouter
  * free engine agrees with the primary or with Qwen. If 2 of the 3 free engines agree
  * on a value, adopt it into the primary result (free) and avoid paying for Haiku.
  * Returns the count of rows resolved this way and the count still unresolved.
+ *
+ * Also fills genuine COVERAGE gaps: if primary has no value at all for a row (not a
+ * disagreement — a miss), adopt whichever free engine does have a reading, rather than
+ * silently leaving it null. See findCoverageGaps() doc comment for the incident this
+ * closes (2026-07-08 — primary AND Qwen both returned null for several fields, so the
+ * old logic below, which only fires on a primary-vs-other value MISMATCH, never even
+ * looked at those rows).
  */
 function resolveWithTieBreaker(
   primary: ExtractionResult,
@@ -998,10 +1039,28 @@ function resolveWithTieBreaker(
   }
 
   for (const orr of openRouter.readings) {
-    if (orr.total_ltrs === null) continue;
     const pv = primary.tower_section?.[orr.tower]?.[orr.type]?.total_ltrs;
     const qv = qwen.readings.find(q => q.tower === orr.tower && q.type === orr.type)?.total_ltrs ?? null;
-    if (pv === null || pv === undefined || qv === null) continue;
+
+    // Coverage fill: primary missed this row entirely — take whichever free engine has it.
+    if (pv === null || pv === undefined) {
+      const fill = qv ?? orr.total_ltrs;
+      const row = primary.tower_section?.[orr.tower]?.[orr.type];
+      if (fill != null && row) {
+        console.warn(`[extraction] tower coverage-fill: primary missing ${orr.tower} ${orr.type} → adopting ${fill} from ${qv != null ? 'qwen' : 'tie-breaker'}`);
+        row.total_ltrs = fill;
+        row.confidence = Math.min(row.confidence ?? 1, 0.7);
+        primary.flagged_fields = [
+          ...(primary.flagged_fields ?? []),
+          `${orr.tower}_${orr.type}_total_ltrs: filled from ${qv != null ? 'qwen' : 'tie-breaker'} (primary missed this row)`,
+        ];
+        resolved++;
+      }
+      continue;
+    }
+
+    if (orr.total_ltrs === null) continue;
+    if (qv === null) continue;
 
     const pqRatio = Math.min(pv, qv) / Math.max(pv, qv);
     if (pqRatio >= TOLERANCE_RATIO) continue; // primary & qwen already agree on this row
@@ -1051,11 +1110,27 @@ function resolveSourceTieBreaker(
   if (openRouter.sourceReadings.length === 0) return { resolved: 0, unresolved: 0 };
 
   for (const orr of openRouter.sourceReadings) {
-    if (orr.total === null) continue;
     const pSource = primary.water_sources?.find(s => s.location === orr.location);
     const pv = pSource?.total;
     const qv = qwen.sourceReadings.find(q => q.location === orr.location)?.total ?? null;
-    if (pv === null || pv === undefined || qv === null || !pSource) continue;
+
+    // Coverage fill: primary missed this source row entirely — take whichever free
+    // engine has it, instead of leaving it null with no disagreement ever flagged.
+    if ((pv === null || pv === undefined) && pSource) {
+      const fill = qv ?? orr.total;
+      if (fill != null) {
+        console.warn(`[extraction] source coverage-fill: primary missing "${orr.location}" → adopting ${fill} from ${qv != null ? 'qwen' : 'tie-breaker'}`);
+        pSource.total = fill;
+        pSource.confidence = Math.min(pSource.confidence ?? 1, 0.7);
+        primary.flagged_fields = [
+          ...(primary.flagged_fields ?? []),
+          `water_source_${orr.location}_total: filled from ${qv != null ? 'qwen' : 'tie-breaker'} (primary missed this row)`,
+        ];
+        resolved++;
+      }
+      continue;
+    }
+    if (orr.total === null || qv === null || pv === null || pv === undefined || !pSource) continue;
 
     const pqRatio = Math.min(pv, qv) / Math.max(pv, qv);
     if (pqRatio >= SOURCE_TOLERANCE_RATIO) continue; // primary & qwen already agree
@@ -1102,9 +1177,25 @@ function resolveSummaryTieBreaker(
   ];
 
   for (const f of fields) {
-    if (f.orVal === null || f.qVal === null) continue;
     const pv = primary.summary[f.key];
-    if (pv === null || pv === undefined) continue;
+
+    // Coverage fill: primary missed this summary field entirely — take whichever free
+    // engine has it. This is the exact gap that let the 2026-07-08 incident through:
+    // primary null + Qwen null → no disagreement ever detected → gate passed anyway.
+    if (pv === null || pv === undefined) {
+      const fill = f.qVal ?? f.orVal;
+      if (fill != null) {
+        console.warn(`[extraction] summary coverage-fill: primary missing ${f.label} → adopting ${fill} from ${f.qVal != null ? 'qwen' : 'tie-breaker'}`);
+        primary.summary[f.key] = fill;
+        primary.flagged_fields = [
+          ...(primary.flagged_fields ?? []),
+          `${f.label}: filled from ${f.qVal != null ? 'qwen' : 'tie-breaker'} (primary missed this field)`,
+        ];
+        resolved++;
+      }
+      continue;
+    }
+    if (f.orVal === null || f.qVal === null) continue;
 
     const pqRatio = Math.min(pv, f.qVal) / Math.max(pv, f.qVal);
     if (pqRatio >= TOLERANCE_RATIO) continue; // primary & qwen already agree
@@ -1250,11 +1341,12 @@ async function extractSheetDataInner(
   const qwenSourceDisagreements = findSourceDisagreements(result, qwenSourceReadings, 'primary', 'qwen');
   const qwenSummaryDisagreements = findSummaryDisagreements(result, qwenSummaryInputTotal, qwenSummaryTowerUsage, 'primary', 'qwen');
   const qwenDisagreements = [...qwenTowerDisagreements, ...qwenSourceDisagreements, ...qwenSummaryDisagreements];
+  const coverageGaps = findCoverageGaps(result);
 
   const sanity = checkSanity(result, qwenResult);
   const lowConfidence = result.overall_confidence < CONFIDENCE_THRESHOLD;
 
-  const gateClean = qwenDisagreements.length === 0 && !sanity.violated && !lowConfidence;
+  const gateClean = qwenDisagreements.length === 0 && coverageGaps.length === 0 && !sanity.violated && !lowConfidence;
   if (gateClean) {
     console.log('[extraction] Agreement gate PASSED → accepting free result, no paid call');
     progress?.('success', 'Agreement gate PASSED — Qwen agrees, sanity OK', 'accepting free result · no paid call');
@@ -1265,9 +1357,10 @@ async function extractSheetDataInner(
   if (qwenTowerDisagreements.length > 0) gateFailReasons.push(`${qwenTowerDisagreements.length} tower disagreement(s)`);
   if (qwenSourceDisagreements.length > 0) gateFailReasons.push(`${qwenSourceDisagreements.length} source disagreement(s)`);
   if (qwenSummaryDisagreements.length > 0) gateFailReasons.push(`${qwenSummaryDisagreements.length} summary disagreement(s)`);
+  if (coverageGaps.length > 0) gateFailReasons.push(`${coverageGaps.length} coverage gap(s): ${coverageGaps.join('; ')}`);
   if (sanity.violated) gateFailReasons.push('sanity violation');
   if (lowConfidence) gateFailReasons.push(`low confidence (${(result.overall_confidence*100).toFixed(0)}%)`);
-  console.log(`[extraction] Gate failed (tower=${qwenTowerDisagreements.length} src=${qwenSourceDisagreements.length} summary=${qwenSummaryDisagreements.length} sanity=${sanity.violated} lowConf=${lowConfidence})`);
+  console.log(`[extraction] Gate failed (tower=${qwenTowerDisagreements.length} src=${qwenSourceDisagreements.length} summary=${qwenSummaryDisagreements.length} coverage=${coverageGaps.length} sanity=${sanity.violated} lowConf=${lowConfidence})`);
   progress?.('warn', `Agreement gate FAILED — ${gateFailReasons.join(', ')}`, 'trying free tie-breaker next');
 
   // ── Phase 2.3: free tie-breaker (OpenRouter) — tower + source + summary ─────
@@ -1283,7 +1376,8 @@ async function extractSheetDataInner(
   const anyFreeDisagreement =
     qwenTowerDisagreements.length > 0 ||
     qwenSourceDisagreements.length > 0 ||
-    qwenSummaryDisagreements.length > 0;
+    qwenSummaryDisagreements.length > 0 ||
+    coverageGaps.length > 0; // whole-section misses need a shot at the tie-breaker too, not just value mismatches
 
   if (anyFreeDisagreement && qwenResult) {
     progress?.('info', 'Free tie-breaker — calling OpenRouter (Qwen2.5-VL-32B)…', 'free · 3rd independent engine');
@@ -1349,7 +1443,13 @@ async function extractSheetDataInner(
       // (!stillNeedsPaid) return result` below and silently ship a value that fails
       // its own sanity check. Force paid escalation instead.
       const postCorrectionSanity = checkSanity(result, qwenResult, openRouter);
-      if (!stillNeedsPaid && !postCorrectionSanity.violated) {
+      // Re-check coverage gaps too — resolveSourceTieBreaker/resolveSummaryTieBreaker
+      // only fill a gap when at least one free engine (Qwen or the tie-breaker) actually
+      // has a reading for it. If EVERY free engine missed the same section (the exact
+      // 2026-07-08 incident), the gap survives the tie-breaker step and must force paid
+      // escalation instead of silently shipping with the "resolved" flag and no data.
+      const postCorrectionCoverageGaps = findCoverageGaps(result);
+      if (!stillNeedsPaid && !postCorrectionSanity.violated && postCorrectionCoverageGaps.length === 0) {
         result.flagged_fields = [...(result.flagged_fields ?? []), 'resolved_by:free_tie_breaker'];
         console.log('[extraction] Resolved entirely by free engines → no paid call');
         return { result, openRouterResult };
@@ -1358,7 +1458,20 @@ async function extractSheetDataInner(
         console.warn('[extraction] Tie-breaker "resolved" all rows but result STILL fails sanity → forcing paid escalation instead of returning it');
         stillNeedsPaid = true;
       }
+      if (postCorrectionCoverageGaps.length > 0) {
+        console.warn(`[extraction] Coverage gap(s) remain after free tie-breaker: ${postCorrectionCoverageGaps.join('; ')} → forcing paid escalation`);
+        stillNeedsPaid = true;
+      }
     }
+  }
+
+  // Unconditional final coverage recheck — covers the case where Phase 2.3's
+  // tie-breaker block above never ran at all (it's gated on `qwenResult` being
+  // truthy; if the HF call failed outright, coverageGaps from the initial gate check
+  // would otherwise be silently dropped here with stillNeedsPaid still false).
+  if (findCoverageGaps(result).length > 0) {
+    console.warn('[extraction] Coverage gap(s) remain with no free tie-breaker attempted (qwenResult unavailable) → forcing paid escalation');
+    stillNeedsPaid = true;
   }
 
   if (!stillNeedsPaid) {
@@ -1375,10 +1488,15 @@ async function extractSheetDataInner(
   // documented incident history) when escalation was triggered by something
   // sheet-wide (low_confidence, or a sanity check with no section-specific signal)
   // rather than a disagreement/correction attributable to one section.
+  // coverageGaps feed the same crop selection as disagreements — a "0/7 sources read"
+  // gap needs the exact same zoomed-in middle-section crop as a value disagreement would,
+  // it just comes from a coverage check instead of a mismatch check (see findCoverageGaps).
+  const hasSourceGap = coverageGaps.some(g => g.startsWith('water_sources'));
+  const hasSummaryGap = coverageGaps.some(g => g.startsWith('summary'));
   const cropSet = new Set<CropRegion>();
   if (qwenTowerDisagreements.length > 0 || sanity.corrections.length > 0) cropSet.add('top');
-  if (qwenSourceDisagreements.length > 0) cropSet.add('middle');
-  if (qwenSummaryDisagreements.length > 0) cropSet.add('bottom');
+  if (qwenSourceDisagreements.length > 0 || hasSourceGap) cropSet.add('middle');
+  if (qwenSummaryDisagreements.length > 0 || hasSummaryGap) cropSet.add('bottom');
   if (cropSet.size === 0) {
     cropSet.add('top');
     cropSet.add('bottom');
