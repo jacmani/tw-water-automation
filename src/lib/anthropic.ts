@@ -864,6 +864,7 @@ import type { QwenVisionResult } from './qwenVision';
 import type { MistralOcrResult } from './mistralOcr';
 import { extractSheetWithGemini } from './geminiVision';
 import { extractTowerTotalsWithOpenRouter, type OpenRouterVisionResult } from './openRouterVision';
+import { extractTowerTotalsWithGroq } from './groqVision';
 import { CostTracker } from './costTracker';
 import { cropRegions, type CropRegion, type CroppedImage } from './imageCrop';
 
@@ -1287,15 +1288,31 @@ async function extractSheetDataInner(
   if (anyFreeDisagreement && qwenResult) {
     progress?.('info', 'Free tie-breaker — calling OpenRouter (Qwen2.5-VL-32B)…', 'free · 3rd independent engine');
     const t0 = Date.now();
-    const openRouter = await extractTowerTotalsWithOpenRouter(base64Image, mediaType);
-    openRouterResult = openRouter;
+    let openRouter = await extractTowerTotalsWithOpenRouter(base64Image, mediaType);
     const ms = Date.now() - t0;
     if (openRouter.success) {
       cost?.addFree('OpenRouter (tie-breaker)', 'free tier');
       progress?.('engine', `OpenRouter ✓ (${ms}ms)`, 'Qwen2.5-VL-32B — resolving tower/source/summary disputes');
     } else {
-      progress?.('warn', 'OpenRouter tie-breaker unavailable', 'routing to paid escalation');
+      // OpenRouter's free roster can go fully dark (rotates, sometimes rate-limited
+      // account-wide) — Groq is a completely independent free tier (own account, own
+      // rate limits) kept as a substitute for the SAME tie-breaker role rather than a
+      // second parallel vote, so a full OpenRouter outage doesn't force every
+      // disagreement straight to paid Haiku. See groqVision.ts. No-ops gracefully if
+      // GROQ_API_KEY is unset (same as every other optional engine key).
+      progress?.('warn', 'OpenRouter tie-breaker unavailable', 'trying Groq fallback');
+      const gT0 = Date.now();
+      const groq = await extractTowerTotalsWithGroq(base64Image, mediaType);
+      const gMs = Date.now() - gT0;
+      if (groq.success) {
+        openRouter = groq; // structurally identical — drop-in substitute for everything below
+        cost?.addFree('Groq (fallback tie-breaker)', 'free tier');
+        progress?.('engine', `Groq ✓ (${gMs}ms)`, `${groq.model} — resolving tower/source/summary disputes`);
+      } else {
+        progress?.('warn', 'Groq fallback also unavailable', 'routing to paid escalation');
+      }
     }
+    openRouterResult = openRouter;
 
     if (!openRouter.success) {
       console.log('[extraction] Tie-breaker unavailable — disagreements remain → paid escalation');

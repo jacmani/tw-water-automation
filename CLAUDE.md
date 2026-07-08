@@ -25,6 +25,7 @@ A full-stack web application that replaces the WhatsApp photo dead-end at Trinit
 | **Primary Extractor (FREE)** | **Google Gemini 2.5 Flash** (`gemini-2.5-flash`) | **NEW default.** Free tier 1,500 req/day, no card. Set via `EXTRACTION_PRIMARY=gemini` |
 | Escalation Model (PAID) | Claude Haiku (`claude-haiku-4-5-20251001`) | **Only paid model.** Called only when free engines disagree. **Opus REMOVED** (5× Haiku cost) |
 | Tie-breaker (FREE) | OpenRouter, 5-candidate free-model roster (see `MODEL_CANDIDATES` in `openRouterVision.ts`) — 2 Gemma-4 variants, 2 NVIDIA Nemotron variants, `openrouter/free` meta-router as last resort | Free 2nd+3rd opinion before paying Haiku — reads tower + source + summary fields. Verified against OpenRouter's live `/api/v1/models` catalog directly (2026-07-08) — every free+vision model they currently list. Re-verify with `scripts/check-openrouter-roster.ts` (no API key needed, catalog is public); roster rotates faster than expected — this exact list needed replacing after only ~2 sessions. ~50 req/day (1,000/day after any $10 lifetime top-up) |
+| Tie-breaker fallback (FREE, optional) | Groq, 2-candidate roster (see `MODEL_CANDIDATES` in `groqVision.ts`) — `meta-llama/llama-4-scout-17b-16e-instruct` then `qwen/qwen3.6-27b` | Only called if OpenRouter's tie-breaker fails entirely (dead roster / rate-limited) — same role, independent free account/rate-limit pool, so one provider's outage doesn't force every disagreement to paid Haiku. Verified live against `console.groq.com/docs/vision` (2026-07-08). Requires `GROQ_API_KEY` (free, no card, console.groq.com/keys) — no-ops if unset, same as every other optional engine key. Re-verify with `scripts/check-groq-vision.ts` (needs a real key, makes one tiny live call per candidate) |
 | Parallel Validator (FREE, budget-risk) | HF Router, rotating {model, provider} roster (see `HF_CANDIDATES` in `qwenVision.ts`) — Qwen3-VL-8B is first choice, falls back through Gemma-4-31B and DeepSeek-OCR across featherless-ai/novita/together/deepinfra | Different visual encoder(s), OCR-optimised. Agreement gate vs primary. **NOTE:** all candidates draw from the SAME shared HF Inference Provider credit ($0.10/mo on free accounts, 2026) — rotating providers buys resilience against one dead model/provider (confirmed live: Qwen3-VL-8B on novita was erroring 2026-07-08), not extra free quota. Check HF billing dashboard periodically, or run `scripts/check-hf-quota.ts` (see `docs/ocr-audit-2026-07.md` P0-1) |
 | Handwriting OCR (**always-paid, negligible cost**) | Mistral OCR 3 (`mistral-ocr-2512`) | 88.9% handwriting accuracy, context-injected into primary extractor. Runs on **every** upload regardless of agreement-gate outcome, billed ~$0.002/page — it is NOT a free-tier engine like Gemini/Qwen/OpenRouter, just cheap enough (~$0.73/yr at 1 upload/day) to treat as negligible. Mistral's separate Le Chat free-trial tier (an informal fallback some teams rely on) was retired June 2026 — there is no free path to this engine anymore, only the metered API |
 | Word OCR | Google Vision DOCUMENT_TEXT_DETECTION | Date + number corroboration |
@@ -302,8 +303,13 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=   # Supabase anon key (public, used client-side)
 SUPABASE_SERVICE_ROLE_KEY=       # Service role key (server-only, bypasses RLS)
 
 # AI Extraction
-ANTHROPIC_API_KEY=               # Claude Haiku + Opus (server-only)
+ANTHROPIC_API_KEY=               # Claude Haiku (paid escalation, server-only)
+GEMINI_API_KEY=                  # Google AI Studio — enables free Gemini 2.5 Flash primary extractor (EXTRACTION_PRIMARY=gemini)
 HF_TOKEN=                        # HuggingFace token — enables Qwen3-VL-8B parallel extractor
+OPENROUTER_API_KEY=              # OpenRouter — enables free tie-breaker roster (openRouterVision.ts)
+OPENROUTER_MODEL=                # optional — override roster, tried first
+GROQ_API_KEY=                    # Groq (free, no card, console.groq.com/keys) — enables fallback tie-breaker if OpenRouter is unavailable (groqVision.ts)
+GROQ_MODEL=                      # optional — override roster, tried first
 MISTRAL_API_KEY=                 # Mistral — enables Mistral OCR 3 handwriting transcript
 
 # OCR Engines
@@ -320,7 +326,7 @@ RESEND_DOMAIN=                   # Verified Resend domain (production only)
 CRON_SECRET=                     # Vercel cron Authorization: Bearer header
 ```
 
-All four OCR engine keys are optional — a missing key causes that engine to silently skip. The pipeline degrades gracefully but loses cross-validation benefit.
+All engine keys above (Gemini, HF, OpenRouter, Groq, Mistral, Google Vision, OCR.space) are optional — a missing key causes that engine to silently skip. The pipeline degrades gracefully but loses cross-validation benefit; the only genuinely required key for the app to run at all is `ANTHROPIC_API_KEY` (Haiku is the fallback primary if Gemini is unset, and the last-resort paid escalation either way).
 
 ---
 
@@ -345,6 +351,7 @@ All four OCR engine keys are optional — a missing key causes that engine to si
 - [x] Qwen3-VL-8B parallel extractor
 - [x] Mistral OCR 3 context injection
 - [x] Sanity checks on Opus escalation path + vol_today auto-correction
+- [x] Groq fallback tie-breaker (`groqVision.ts`) — free, independent-account backup for when OpenRouter's roster is unavailable
 
 ---
 
@@ -385,6 +392,12 @@ All four OCR engine keys are optional — a missing key causes that engine to si
 **Recharts over chart.js:** Better React integration, works with html-to-image's DOM capture since it renders SVG (not canvas).
 
 **Party Hall stored in amenities table:** The schema doesn't warrant a separate table for 7 rows. `section` column distinguishes it.
+
+**Eden AI evaluated and rejected as a new engine (2026-07-08):** Eden AI (app.edenai.run) looks like a huge free-model catalog (718–931 models across 58 providers) but is a paid aggregator — "no markup, pay provider price + 5.5% fee." Checked live via the account's own catalog UI: only 2 models are genuinely `Free`/`Free` — `gemma-4-26b-a4b-it` and `gemma-4-31b-it`, both under the `Google` provider — and both are already in our OpenRouter and HF rosters. Everything else, including models whose *own* direct APIs are free (Groq's `llama-4-scout`, Cloudflare Workers AI's vision models), is billed at standard per-token rates through Eden — e.g. `meta-llama/llama-4-scout-17b-16e-instruct` is free directly on Groq but $0.11/$0.34 per Mtoken via Eden. Adding it as a pipeline engine would mean a new API key, a new billing relationship sitting at $0 balance, and zero net-new free model coverage. Not integrated. If a future session revisits this, re-check the catalog's `Price` filter (Free/Free tag) directly rather than trusting model names/counts.
+
+**OVHcloud AI Endpoints anonymous tier — could not verify, not integrated:** `github.com/mnfst/awesome-free-llm-apis` lists a free, keyless, anonymous tier (2 RPM/IP) at `oai.endpoints.kepler.ai.cloud.ovh.net`, with `Qwen2.5-VL-72B-Instruct` as a vision model — would have been a genuinely valuable zero-setup addition (larger model than anything else in the roster). But OVH's current live public catalog (`ovhcloud.com/en/public-cloud/ai-endpoints/catalog`, fetched 2026-07-08) shows `Qwen2.5-VL-72B-Instruct` at €0.91/Mtoken with no mention of an anonymous free mode anywhere on the page — the "kepler" free endpoint may be a legacy/separate product from OVH's current commercial catalog, or the awesome-list entry may be stale. Given the ambiguity and inability to test without risking either silent failures or an unexpected bill, this was not built. Worth re-verifying directly (e.g. one manual curl with no Authorization header) before ever wiring it in.
+
+**Groq added as OpenRouter fallback, not a parallel vote (2026-07-08):** `console.groq.com/docs/vision` confirms two current, documented, non-preview vision models (`meta-llama/llama-4-scout-17b-16e-instruct`, `qwen/qwen3.6-27b`), free tier, no card. Rather than adding a 4th simultaneous free opinion (more latency + complexity for a role that's already well-covered), Groq only fires when OpenRouter's tie-breaker fails outright — same role, independent account/rate-limit pool. See `src/lib/groqVision.ts`.
 
 ---
 

@@ -20,6 +20,8 @@
  *   npx ts-node --project tsconfig.json scripts/check-openrouter-roster.ts
  */
 
+export {}; // isolate module scope — prevents `main` colliding with other standalone scripts
+
 // Kept as a plain string array here (not imported from openRouterVision.ts) so
 // this script has zero dependency on that module's other exports/env reads —
 // update this list by hand to match MODEL_CANDIDATES when you change one.
